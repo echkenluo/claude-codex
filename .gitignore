@@ -1,0 +1,6 @@
+.task/*
+!.task/state.json
+!.task/tasks.json
+review/
+*.log
+pipeline.config.local.json
