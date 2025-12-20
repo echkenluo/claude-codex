@@ -32,9 +32,52 @@ Do NOT use the PLAN.md workflow for this project. The orchestrator handles plann
 
 ### Execution Modes
 
-**Interactive mode** (default, `./scripts/orchestrator.sh`): Outputs prompts for you to execute in the current Claude session instead of spawning subprocesses.
+**Interactive mode** (default, `./scripts/orchestrator.sh`): Outputs tasks for YOU (Claude Code) to execute in the current session.
 
 **Headless mode** (`./scripts/orchestrator.sh headless`): Spawns Claude/Codex subprocesses autonomously.
+
+---
+
+## Interactive Mode: How It Works
+
+When running `./scripts/orchestrator.sh` in interactive mode, the pipeline works step-by-step:
+
+1. **Orchestrator outputs a task** - Shows what you need to do and which file to write
+2. **You execute the task** - Follow the instructions and write the required output file
+3. **Run orchestrator again** - `./scripts/orchestrator.sh` to continue to the next step
+4. **Repeat** until the pipeline completes
+
+### Example Flow
+
+```
+$ ./scripts/orchestrator.sh
+[INFO] Current state: plan_drafting
+[INFO] Creating initial plan (Claude)...
+
+═══════════════════════════════════════════════════════════════════════════════
+  CLAUDE TASK: Plan Creation
+═══════════════════════════════════════════════════════════════════════════════
+
+[... task details ...]
+
+═══════════════════════════════════════════════════════════════════════════════
+  OUTPUT REQUIRED: .task/plan.json
+  THEN RUN: ./scripts/orchestrator.sh
+═══════════════════════════════════════════════════════════════════════════════
+```
+
+**What you do:**
+1. Read the task instructions above
+2. Execute the task (create the plan)
+3. Write the output to `.task/plan.json`
+4. Run `./scripts/orchestrator.sh` to continue
+
+### Important Notes
+
+- **Claude tasks** (plan creation, refinement, implementation): YOU execute these
+- **Codex tasks** (plan review, code review): The orchestrator runs these as subprocesses automatically
+- The orchestrator will exit after showing you a Claude task - this is expected behavior
+- Always run `./scripts/orchestrator.sh` after completing your task to continue
 
 ---
 

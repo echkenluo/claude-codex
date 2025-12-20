@@ -13,10 +13,10 @@
 ./scripts/orchestrator.sh
 ```
 - Sets `CLAUDE_INTERACTIVE=1` environment variable
-- Claude scripts output prompts instead of spawning subprocesses
-- User executes the prompts in their current Claude Code session
-- Codex scripts still spawn subprocesses (for schema enforcement)
-- Useful for debugging or controlled execution
+- Claude tasks output prompts and exit - Claude Code executes them directly
+- After completing a task, run `./scripts/orchestrator.sh` again to continue
+- Codex tasks still spawn subprocesses (for schema enforcement)
+- Non-blocking: orchestrator exits after outputting each Claude task
 
 ### Headless Mode
 ```bash

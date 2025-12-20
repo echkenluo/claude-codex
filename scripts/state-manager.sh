@@ -105,6 +105,28 @@ reset_iteration() {
   mv "${STATE_FILE}.tmp" "$STATE_FILE"
 }
 
+# Set awaiting_output flag (for interactive mode)
+# This indicates Claude Code should write an output file
+set_awaiting_output() {
+  local output_file="$1"
+  jq --arg f "$output_file" \
+    '.awaiting_output = $f | .updated_at = (now | todate)' \
+    "$STATE_FILE" > "${STATE_FILE}.tmp"
+  mv "${STATE_FILE}.tmp" "$STATE_FILE"
+}
+
+# Get awaiting_output flag
+get_awaiting_output() {
+  jq -r '.awaiting_output // empty' "$STATE_FILE"
+}
+
+# Clear awaiting_output flag (after output received)
+clear_awaiting_output() {
+  jq 'del(.awaiting_output) | .updated_at = (now | todate)' \
+    "$STATE_FILE" > "${STATE_FILE}.tmp"
+  mv "${STATE_FILE}.tmp" "$STATE_FILE"
+}
+
 # Check if stuck (no update for N seconds)
 is_stuck() {
   local timeout_seconds="${1:-600}"

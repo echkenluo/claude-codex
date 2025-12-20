@@ -39,6 +39,7 @@ show_status() {
 reset_to_idle() {
   echo -e "${YELLOW}Resetting pipeline to idle...${NC}"
   set_state "idle" ""
+  clear_awaiting_output
   rm -f .task/impl-result.json .task/review-result.json
   echo -e "${GREEN}Pipeline reset to idle${NC}"
 }
@@ -51,13 +52,16 @@ retry_current() {
   local previous_state
   previous_state=$(get_previous_state)
 
+  # Clear any stale awaiting_output flag from previous interactive run
+  clear_awaiting_output
+
   case "$status" in
     error)
       case "$previous_state" in
         plan_drafting)
           echo -e "${YELLOW}Retrying from plan creation (failed in: $previous_state)...${NC}"
           set_state "plan_drafting" ""
-          # plan.json doesn't exist yet, just retry from user-request.txt
+          rm -f .task/plan.json
           ;;
         plan_refining|plan_reviewing)
           echo -e "${YELLOW}Retrying from plan refinement (failed in: $previous_state)...${NC}"

@@ -138,10 +138,10 @@ Outputs prompts for the current Claude Code session to execute instead of spawni
 ```
 
 In interactive mode:
-- Claude tasks output the full prompt for you to execute in your current session
-- You manually run the task and ensure the output file is created
-- Codex tasks still spawn subprocesses (for schema enforcement)
-- Useful for debugging or when you want more control over execution
+- Claude tasks output the prompt and exit immediately (non-blocking)
+- You (Claude Code) execute the task and write the required output file
+- Run `./scripts/orchestrator.sh` again after completing each task to continue
+- Codex tasks still spawn subprocesses automatically (for schema enforcement)
 
 ### Headless Mode
 

@@ -95,31 +95,22 @@ Only use needs_clarification for blocking questions that prevent you from creati
 
 # Check for interactive mode (running inside Claude Code session)
 if [[ "${CLAUDE_INTERACTIVE:-}" == "1" ]]; then
-  echo "=== INTERACTIVE MODE ==="
-  echo "Execute the following task in your current session:"
+  echo ""
+  echo "═══════════════════════════════════════════════════════════════════════════════"
+  echo "  CLAUDE TASK: Plan Refinement"
+  echo "═══════════════════════════════════════════════════════════════════════════════"
   echo ""
   echo "$PROMPT"
   echo ""
+  echo "═══════════════════════════════════════════════════════════════════════════════"
+  echo "  OUTPUT REQUIRED: .task/plan-refined.json"
+  echo "  THEN RUN: ./scripts/orchestrator.sh"
+  echo "═══════════════════════════════════════════════════════════════════════════════"
+  echo ""
 
-  # Remove stale output file to ensure fresh output
-  rm -f .task/plan-refined.json
-
-  echo "Waiting for .task/plan-refined.json to be created..."
-  echo "(Press Ctrl+C to abort)"
-
-  # Wait for output file to exist
-  while [[ ! -f .task/plan-refined.json ]]; do
-    sleep 2
-  done
-
-  # Verify it's valid JSON
-  if ! jq empty .task/plan-refined.json 2>/dev/null; then
-    echo "ERROR: .task/plan-refined.json is not valid JSON" >&2
-    exit 1
-  fi
-
-  echo "Output file detected. Continuing..."
-  exit 0
+  # Exit with special code to signal "task pending for Claude Code"
+  # Note: Do NOT delete output file - orchestrator checks for it on rerun
+  exit 100
 fi
 
 # Headless mode: Execute Claude subprocess

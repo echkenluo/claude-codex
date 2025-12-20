@@ -139,10 +139,30 @@ run_plan_creation() {
     return 1
   fi
 
+  # Check if we're resuming after interactive mode (awaiting_output was set)
+  local awaiting
+  awaiting=$(get_awaiting_output)
+  if [[ "$awaiting" == ".task/plan.json" ]] && [[ -f .task/plan.json ]] && jq empty .task/plan.json 2>/dev/null; then
+    log_info "Resuming: plan.json received from Claude Code"
+    clear_awaiting_output
+    local plan_id
+    plan_id=$(jq -r '.id' .task/plan.json)
+    log_success "Plan created: $plan_id"
+    set_state "plan_refining" "$plan_id"
+    reset_iteration
+    return 0
+  fi
+
   local user_request
   user_request=$(cat .task/user-request.txt)
 
-  if "$SCRIPT_DIR/run-claude-plan-create.sh" "$user_request"; then
+  "$SCRIPT_DIR/run-claude-plan-create.sh" "$user_request"
+  local exit_code=$?
+
+  # Exit code 100 = interactive mode, task pending for Claude Code
+  if [[ $exit_code -eq 100 ]]; then
+    return 100
+  elif [[ $exit_code -eq 0 ]]; then
     local plan_id
     plan_id=$(jq -r '.id' .task/plan.json)
     log_success "Plan created: $plan_id"
@@ -150,7 +170,6 @@ run_plan_creation() {
     reset_iteration
     return 0
   else
-    local exit_code=$?
     log_error "Plan creation failed with exit code $exit_code"
     log_error_to_file "plan_drafting" "$exit_code" "Claude plan creation failed"
     return 1
@@ -163,7 +182,34 @@ run_implementation() {
   local task_id
   task_id=$(get_task_id)
 
-  if "$SCRIPT_DIR/run-claude.sh"; then
+  # Check if we're resuming after interactive mode (awaiting_output was set)
+  local awaiting
+  awaiting=$(get_awaiting_output)
+  if [[ "$awaiting" == ".task/impl-result.json" ]] && [[ -f .task/impl-result.json ]] && jq empty .task/impl-result.json 2>/dev/null; then
+    log_info "Resuming: impl-result.json received from Claude Code"
+    clear_awaiting_output
+    local status
+    status=$(jq -r '.status' .task/impl-result.json)
+
+    if [[ "$status" == "needs_clarification" ]]; then
+      log_warn "Claude needs clarification from user"
+      log_info "Questions saved to .task/impl-result.json"
+      set_state "needs_user_input" "$task_id"
+      return 0
+    fi
+
+    log_success "Implementation completed"
+    set_state "reviewing" "$task_id"
+    return 0
+  fi
+
+  "$SCRIPT_DIR/run-claude.sh"
+  local exit_code=$?
+
+  # Exit code 100 = interactive mode, task pending for Claude Code
+  if [[ $exit_code -eq 100 ]]; then
+    return 100
+  elif [[ $exit_code -eq 0 ]]; then
     if [[ -f .task/impl-result.json ]]; then
       local status
       status=$(jq -r '.status' .task/impl-result.json)
@@ -180,7 +226,6 @@ run_implementation() {
     set_state "reviewing" "$task_id"
     return 0
   else
-    local exit_code=$?
     log_error "Implementation failed with exit code $exit_code"
     log_error_to_file "implementing" "$exit_code" "Claude implementation failed"
     return 1
@@ -237,12 +282,28 @@ run_fix() {
   local task_id
   task_id=$(get_task_id)
 
-  if "$SCRIPT_DIR/run-claude.sh"; then
+  # Check if we're resuming after interactive mode (awaiting_output was set)
+  local awaiting
+  awaiting=$(get_awaiting_output)
+  if [[ "$awaiting" == ".task/impl-result.json" ]] && [[ -f .task/impl-result.json ]] && jq empty .task/impl-result.json 2>/dev/null; then
+    log_info "Resuming: impl-result.json received from Claude Code"
+    clear_awaiting_output
+    log_success "Fix completed"
+    set_state "reviewing" "$task_id"
+    return 0
+  fi
+
+  "$SCRIPT_DIR/run-claude.sh"
+  local exit_code=$?
+
+  # Exit code 100 = interactive mode, task pending for Claude Code
+  if [[ $exit_code -eq 100 ]]; then
+    return 100
+  elif [[ $exit_code -eq 0 ]]; then
     log_success "Fix completed"
     set_state "reviewing" "$task_id"
     return 0
   else
-    local exit_code=$?
     log_error "Fix failed with exit code $exit_code"
     log_error_to_file "fixing" "$exit_code" "Claude fix failed"
     return 1
@@ -255,7 +316,34 @@ run_plan_refinement() {
   local plan_id
   plan_id=$(jq -r '.id // "unknown"' .task/plan.json 2>/dev/null || echo "unknown")
 
-  if "$SCRIPT_DIR/run-claude-plan.sh"; then
+  # Check if we're resuming after interactive mode (awaiting_output was set)
+  local awaiting
+  awaiting=$(get_awaiting_output)
+  if [[ "$awaiting" == ".task/plan-refined.json" ]] && [[ -f .task/plan-refined.json ]] && jq empty .task/plan-refined.json 2>/dev/null; then
+    log_info "Resuming: plan-refined.json received from Claude Code"
+    clear_awaiting_output
+    local needs_input
+    needs_input=$(jq -r '.needs_clarification // false' .task/plan-refined.json)
+
+    if [[ "$needs_input" == "true" ]]; then
+      log_warn "Claude needs clarification on the plan"
+      log_info "Questions saved to .task/plan-refined.json"
+      set_state "needs_user_input" "$plan_id"
+      return 0
+    fi
+
+    log_success "Plan refinement completed"
+    set_state "plan_reviewing" "$plan_id"
+    return 0
+  fi
+
+  "$SCRIPT_DIR/run-claude-plan.sh"
+  local exit_code=$?
+
+  # Exit code 100 = interactive mode, task pending for Claude Code
+  if [[ $exit_code -eq 100 ]]; then
+    return 100
+  elif [[ $exit_code -eq 0 ]]; then
     if [[ -f .task/plan-refined.json ]]; then
       local needs_input
       needs_input=$(jq -r '.needs_clarification // false' .task/plan-refined.json)
@@ -272,7 +360,6 @@ run_plan_refinement() {
     set_state "plan_reviewing" "$plan_id"
     return 0
   else
-    local exit_code=$?
     log_error "Plan refinement failed with exit code $exit_code"
     log_error_to_file "plan_refining" "$exit_code" "Claude plan refinement failed"
     return 1
@@ -610,9 +697,13 @@ complete_task() {
 
 # Main orchestration loop
 main_loop() {
+  # Disable set -e for the loop since we handle exit codes manually
+  set +e
+
   while true; do
     local status
     status=$(get_status)
+    local result
 
     log_info "Current state: $status"
 
@@ -622,17 +713,31 @@ main_loop() {
         exit 0
         ;;
       plan_drafting)
-        if ! run_plan_creation; then
+        run_plan_creation
+        result=$?
+        if [[ $result -eq 100 ]]; then
+          set_awaiting_output ".task/plan.json"
+          log_info "Task output above. Execute it, then run: ./scripts/orchestrator.sh"
+          exit 0
+        elif [[ $result -ne 0 ]]; then
           set_state "error" ""
         fi
         ;;
       plan_refining)
-        if ! run_plan_refinement; then
+        run_plan_refinement
+        result=$?
+        if [[ $result -eq 100 ]]; then
+          set_awaiting_output ".task/plan-refined.json"
+          log_info "Task output above. Execute it, then run: ./scripts/orchestrator.sh"
+          exit 0
+        elif [[ $result -ne 0 ]]; then
           set_state "error" "$(jq -r '.id // ""' .task/plan.json 2>/dev/null)"
         fi
         ;;
       plan_reviewing)
-        if ! run_plan_review; then
+        run_plan_review
+        result=$?
+        if [[ $result -ne 0 ]]; then
           set_state "error" "$(jq -r '.id // ""' .task/plan-refined.json 2>/dev/null)"
         fi
         ;;
@@ -647,17 +752,31 @@ main_loop() {
         exit 0
         ;;
       implementing)
-        if ! run_implementation; then
+        run_implementation
+        result=$?
+        if [[ $result -eq 100 ]]; then
+          set_awaiting_output ".task/impl-result.json"
+          log_info "Task output above. Execute it, then run: ./scripts/orchestrator.sh"
+          exit 0
+        elif [[ $result -ne 0 ]]; then
           set_state "error" "$(get_task_id)"
         fi
         ;;
       reviewing)
-        if ! run_review; then
+        run_review
+        result=$?
+        if [[ $result -ne 0 ]]; then
           set_state "error" "$(get_task_id)"
         fi
         ;;
       fixing)
-        if ! run_fix; then
+        run_fix
+        result=$?
+        if [[ $result -eq 100 ]]; then
+          set_awaiting_output ".task/impl-result.json"
+          log_info "Task output above. Execute it, then run: ./scripts/orchestrator.sh"
+          exit 0
+        elif [[ $result -ne 0 ]]; then
           set_state "error" "$(get_task_id)"
         fi
         ;;
@@ -715,6 +834,7 @@ case "${1:-interactive}" in
     log_warn "Resetting pipeline state..."
     init_state
     set_state "idle" ""
+    clear_awaiting_output
     rm -f .task/impl-result.json .task/review-result.json
     rm -f .task/plan.json .task/plan-refined.json .task/plan-review.json
     rm -f .task/current-task.json .task/user-request.txt
