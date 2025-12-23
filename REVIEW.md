@@ -13,10 +13,18 @@ Claude Code ── Plan Refiner + Implementation Coder
 Codex CLI ──── Plan Reviewer + Code Reviewer
 ```
 
-### After (claude-codex)
+### After (claude-codex v1 - deprecated)
 ```
 Claude Code ── Orchestrator + Plan Creator + Plan Refiner + Implementation Coder
 Codex CLI ──── Plan Reviewer + Code Reviewer
+```
+
+### Current (claude-codex v2 - subagent architecture)
+```
+Claude Code Main Thread ── Orchestrator only (coordinates subagents)
+Claude Subagents ───────── planner, researcher, implementer, code-reviewer,
+                           security-reviewer, test-reviewer
+Codex CLI ──────────────── Final plan review + Final code review (2 calls only)
 ```
 
 ## Key Design Decisions
@@ -78,7 +86,6 @@ Codex CLI ──── Plan Reviewer + Code Reviewer
   "autonomy": {
     "mode": "semi-autonomous",
     "approvalPoints": {...},
-    "autoCommit": false,
     "maxAutoRetries": 3,
     "reviewLoopLimit": 10,
     "planReviewLoopLimit": 10,
@@ -112,24 +119,33 @@ implementing
 reviewing
   ↓ (Codex reviews code)
   ├── needs_changes → fixing → reviewing (loop, max 15)
-  └── approved → complete (or committing if autoCommit)
+  └── approved → complete → commit manually
 complete
 ```
 
-## Scripts Inventory (10 total)
+## Scripts Inventory (8 total - v2 subagent architecture)
 
 | Script | Role | Invoked By |
 |--------|------|------------|
-| `orchestrator.sh` | Main loop, state machine | User |
+| `orchestrator.sh` | Shows state and next action | User/Claude |
 | `state-manager.sh` | State read/write utilities | All scripts |
-| `run-claude-plan-create.sh` | Create initial plan | Orchestrator |
-| `run-claude-plan.sh` | Refine plan | Orchestrator |
-| `run-claude.sh` | Implement/fix code | Orchestrator |
-| `run-codex-plan-review.sh` | Review plan | Orchestrator |
-| `run-codex-review.sh` | Review code | Orchestrator |
-| `plan-to-task.sh` | Convert approved plan to task | Orchestrator |
+| `run-codex-plan-review.sh` | Codex final plan review | Main thread |
+| `run-codex-review.sh` | Codex final code review | Main thread |
+| `plan-to-task.sh` | Convert approved plan to task | Main thread |
 | `recover.sh` | Interactive recovery tool | User |
 | `validate-config.sh` | Strict config validation | Orchestrator (dry-run) |
+| `setup.sh` | Setup wizard | User |
+
+## Subagents (6 total - in `.claude/agents/`)
+
+| Subagent | Role | When Invoked |
+|----------|------|--------------|
+| `planner.md` | Draft and refine plans | `plan_drafting`, `plan_refining` |
+| `researcher.md` | Gather codebase context | `plan_refining` |
+| `implementer.md` | Write code | `implementing`, `fixing` |
+| `code-reviewer.md` | Internal code/plan review | After plan/implementation |
+| `security-reviewer.md` | Security assessment | After implementation |
+| `test-reviewer.md` | Test coverage review | After implementation |
 
 ## Validation Results
 
@@ -633,3 +649,67 @@ Also added `rm -f .task/plan.json` to the `plan_drafting` retry case in `recover
 | `scripts/recover.sh` | Added `clear_awaiting_output` to `reset_to_idle()` and `retry_current()` |
 | `scripts/orchestrator.sh` | Added `clear_awaiting_output` to reset command |
 | `.task/state.json` | Reset to clean state (updated_at: null) |
+
+---
+
+## Migration 2: Subagent-Based Architecture (v2)
+
+### Problem
+
+Codex token usage was reaching limits faster than expected due to multiple review iterations. The v1 architecture called Codex for every review iteration (plan and code).
+
+### Solution
+
+Migrated to a subagent-based architecture:
+- **Main Claude Code thread** = Orchestrator only (coordinates work)
+- **Claude Subagents** = Do the actual work (planning, coding, internal reviews)
+- **Codex** = Final review checkpoints only (2 calls per feature)
+
+### Key Changes
+
+| Change | Purpose |
+|--------|---------|
+| Created 6 subagents in `.claude/agents/` | Specialized agents for each role |
+| Removed `run-claude*.sh` scripts | Replaced by Task tool invocations |
+| Removed headless mode | Orchestrator now shows state/actions only |
+| Removed `awaiting_output` state flag | No longer needed without blocking scripts |
+| Added Codex session resume (`resume --last`) | Carry forward context between reviews |
+
+### Architecture
+
+```
+Main Claude Code Thread (Orchestrator)
+  │
+  ├── Subagents (.claude/agents/):
+  │     ├── planner.md
+  │     ├── researcher.md
+  │     ├── implementer.md
+  │     ├── code-reviewer.md
+  │     ├── security-reviewer.md
+  │     └── test-reviewer.md
+  │
+  └── Codex (2 calls only):
+        ├── ./scripts/run-codex-plan-review.sh
+        └── ./scripts/run-codex-review.sh
+```
+
+### Benefits
+
+1. **Reduced Codex usage**: Only 2 Codex calls per feature vs unlimited in v1
+2. **Internal review loops**: Claude subagents catch issues before Codex
+3. **Session resume**: Codex uses `resume --last` to maintain context
+4. **Simpler orchestrator**: Shows what to do, doesn't spawn subprocesses
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `.claude/agents/*.md` | Created 6 subagents |
+| `scripts/orchestrator.sh` | Removed headless mode, shows state/actions |
+| `scripts/state-manager.sh` | Removed `awaiting_output` functions |
+| `scripts/run-codex-*.sh` | Added `resume --last` |
+| `scripts/run-claude*.sh` | Deleted (replaced by subagents) |
+| `CLAUDE.md` | Updated for subagent model |
+| `README.md` | Added subscription recommendations |
+| `docs/workflow.md` | Updated for subagent architecture |
+| `scripts/setup.sh` | Updated templates for subagent model |

@@ -1,13 +1,33 @@
 # Claude Code - Multi-AI Pipeline Project
 
-> **IMPORTANT**: This project uses a multi-AI orchestrator workflow, NOT the standard PLAN.md workflow from global CLAUDE.md. The instructions below override global settings for this project.
+> **IMPORTANT**: This project uses a subagent-based orchestrator workflow. The main Claude Code thread coordinates subagents for planning, implementation, and internal reviews. Codex is called only at key checkpoints.
+
+## Architecture Overview
+
+```
+Main Claude Code Thread (Orchestrator)
+  │
+  ├── Subagents (do the work):
+  │     ├── planner       → Drafts and refines plans
+  │     ├── researcher    → Gathers codebase context
+  │     ├── implementer   → Writes code
+  │     ├── code-reviewer → Internal code quality review
+  │     ├── security-reviewer → Security assessment
+  │     └── test-reviewer → Test coverage review
+  │
+  └── Codex (final reviews only):
+        ├── End of planning phase
+        └── End of implementation phase
+```
+
+---
 
 ## When User Asks to Implement Something
 
-If a user directly asks you to implement a feature or make changes in this project, guide them to use the orchestrator workflow:
+Guide users to use the orchestrator workflow:
 
 ```
-This project uses a multi-AI orchestrator (Claude + Codex) for implementations.
+This project uses a subagent-based orchestrator (Claude subagents + Codex reviews).
 
 To implement your request:
 
@@ -19,118 +39,113 @@ To implement your request:
    ./scripts/orchestrator.sh
 
 The pipeline will:
-- Create and refine a plan (Claude)
-- Review the plan (Codex) - loops until approved
-- Implement the code (Claude)
-- Review the code (Codex) - loops until approved
+- Create and refine a plan (planner + researcher subagents)
+- Run internal reviews (code-reviewer subagent)
+- Final plan review (Codex)
+- Implement the code (implementer subagent)
+- Run internal reviews (code-reviewer + security-reviewer + test-reviewer)
+- Final code review (Codex)
 
-For quick status: ./scripts/orchestrator.sh status
+For status: ./scripts/orchestrator.sh status
 For recovery: ./scripts/recover.sh
 ```
 
-Do NOT use the PLAN.md workflow for this project. The orchestrator handles planning, implementation, and review automatically.
-
-### Execution Modes
-
-**Interactive mode** (default, `./scripts/orchestrator.sh`): Outputs tasks for YOU (Claude Code) to execute in the current session.
-
-**Headless mode** (`./scripts/orchestrator.sh headless`): Spawns Claude/Codex subprocesses autonomously.
-
 ---
 
-## Interactive Mode: How It Works
+## How the Orchestrator Works
 
-When running `./scripts/orchestrator.sh` in interactive mode, the pipeline works step-by-step:
+The orchestrator displays the current state and what action to take:
 
-1. **Orchestrator outputs a task** - Shows what you need to do and which file to write
-2. **You execute the task** - Follow the instructions and write the required output file
-3. **Run orchestrator again** - `./scripts/orchestrator.sh` to continue to the next step
-4. **Repeat** until the pipeline completes
-
-### Example Flow
-
-```
+```bash
 $ ./scripts/orchestrator.sh
 [INFO] Current state: plan_drafting
-[INFO] Creating initial plan (Claude)...
 
-═══════════════════════════════════════════════════════════════════════════════
-  CLAUDE TASK: Plan Creation
-═══════════════════════════════════════════════════════════════════════════════
+ACTION: Invoke 'planner' subagent
 
-[... task details ...]
+Task: Create initial plan from user request
+Input: .task/user-request.txt
+Output: .task/plan.json
 
-═══════════════════════════════════════════════════════════════════════════════
-  OUTPUT REQUIRED: .task/plan.json
-  THEN RUN: ./scripts/orchestrator.sh
-═══════════════════════════════════════════════════════════════════════════════
+After completion, transition state:
+  ./scripts/state-manager.sh set plan_refining "$(jq -r .id .task/plan.json)"
 ```
 
-**What you do:**
-1. Read the task instructions above
-2. Execute the task (create the plan)
-3. Write the output to `.task/plan.json`
-4. Run `./scripts/orchestrator.sh` to continue
+### Workflow Steps
 
-### Important Notes
-
-- **Claude tasks** (plan creation, refinement, implementation): YOU execute these
-- **Codex tasks** (plan review, code review): The orchestrator runs these as subprocesses automatically
-- The orchestrator will exit after showing you a Claude task - this is expected behavior
-- Always run `./scripts/orchestrator.sh` after completing your task to continue
+1. **Read the ACTION** - See which subagent to invoke
+2. **Invoke the subagent** - Use Task tool with the specified agent
+3. **Write output file** - Subagent writes to the specified output location
+4. **Transition state** - Run the shown state-manager command
+5. **Run orchestrator again** - See the next action
 
 ---
 
-## Agent Instructions (When Invoked by Orchestrator)
+## Subagents
 
-You are the **implementation agent** in a two-AI development pipeline.
+Located in `.claude/agents/`:
 
-## Your Three Roles
+| Subagent | Purpose | Model |
+|----------|---------|-------|
+| `planner` | Drafts and refines plans | opus |
+| `researcher` | Gathers codebase context | opus |
+| `implementer` | Writes code | opus |
+| `code-reviewer-sonnet` | Quick code/plan review | sonnet |
+| `code-reviewer-opus` | Deep code/plan review | opus |
+| `security-reviewer-sonnet` | Quick security scan | sonnet |
+| `security-reviewer-opus` | Deep security analysis | opus |
+| `test-reviewer-sonnet` | Quick test check | sonnet |
+| `test-reviewer-opus` | Deep test review | opus |
 
-### Role 1: Plan Creator
-When invoked via `run-claude-plan-create.sh`:
-- Read user request from script argument
-- Create initial plan in `.task/plan.json`
-- Exit (orchestrator handles state transition)
+> **Dual Review Model**: Internal reviewers run in parallel with both sonnet and opus models to get different perspectives. ALL must approve before proceeding to Codex.
 
-### Role 2: Plan Refiner
-When invoked via `run-claude-plan.sh` (state is `plan_refining`):
-- Read initial plan from `.task/plan.json`
-- Read any previous review feedback from `.task/plan-review.json`
-- Add technical details
-- Write to `.task/plan-refined.json`
-- Exit (orchestrator handles state transition)
+### Invoking Subagents
 
-### Role 3: Code Implementer
-When invoked via `run-claude.sh` (state is `implementing` or `fixing`):
-- Read task from `.task/current-task.json`
-- Read any previous review feedback from `.task/review-result.json`
-- Implement following standards
-- Write to `.task/impl-result.json`
-- Exit (orchestrator handles state transition)
+Use the Task tool to invoke subagents:
 
-## Important: Orchestrator Controls State
-- You do NOT modify `.task/state.json`
-- The orchestrator script handles all state transitions
-- Your job is to complete the task and write output files
+```
+Task: planner
+Prompt: "Create an initial plan for the user request in .task/user-request.txt. Output to .task/plan.json"
+```
+
+---
+
+## State Machine
+
+```
+idle
+  ↓
+plan_drafting (planner subagent)
+  ↓
+plan_refining (planner + researcher + code-reviewer internal loop)
+  ↓
+plan_reviewing (Codex final review) ←──────────────────┐
+  ↓                                                    │
+  [needs_changes] → back to plan_refining ─────────────┘
+  ↓ [approved]
+implementing (implementer + internal reviewers loop)
+  ↓
+reviewing (Codex final review) ←───────────────────────┐
+  ↓                                                    │
+  [needs_changes] → fixing → back to reviewing ────────┘
+  ↓ [approved]
+complete
+```
+
+---
 
 ## Shared Knowledge
+
 Read these docs before any work:
 - `docs/standards.md` - Coding standards and review criteria
 - `docs/workflow.md` - Pipeline process and output formats
 
-## Strict Loop-Until-Pass Model
-- Reviews loop until Codex approves
-- No debate mechanism - accept all review feedback
-- Fix ALL issues raised by reviewer
-- Loop limits: planReviewLoopLimit (10), codeReviewLoopLimit (15)
+---
 
-## Pipeline Integration
+## Output Formats
 
 ### Plan Creation Output
 Write to: `.task/plan.json`
 
-Format:
 ```json
 {
   "id": "plan-YYYYMMDD-HHMMSS",
@@ -138,14 +153,13 @@ Format:
   "description": "What the user wants to achieve",
   "requirements": ["req1", "req2"],
   "created_at": "ISO8601",
-  "created_by": "claude"
+  "created_by": "planner"
 }
 ```
 
 ### Plan Refinement Output
 Write to: `.task/plan-refined.json`
 
-Format:
 ```json
 {
   "id": "plan-001",
@@ -161,7 +175,7 @@ Format:
     "Challenge 1 and how to address it",
     "Challenge 2 and how to address it"
   ],
-  "refined_by": "claude",
+  "refined_by": "planner",
   "refined_at": "ISO8601"
 }
 ```
@@ -169,7 +183,6 @@ Format:
 ### Implementation Output
 Write to: `.task/impl-result.json`
 
-Format:
 ```json
 {
   "status": "completed|failed|needs_clarification",
@@ -180,24 +193,61 @@ Format:
 }
 ```
 
-## Handling Review Feedback
+### Internal Review Outputs (Dual-Model)
 
-### On Plan Review Feedback
-If invoked after plan review feedback:
-1. Read `.task/plan-review.json`
-2. Address ALL concerns raised by Codex
-3. Update `.task/plan-refined.json` with improvements
+| File | Reviewer |
+|------|----------|
+| `.task/internal-review-sonnet.json` | code-reviewer-sonnet |
+| `.task/internal-review-opus.json` | code-reviewer-opus |
+| `.task/security-review-sonnet.json` | security-reviewer-sonnet |
+| `.task/security-review-opus.json` | security-reviewer-opus |
+| `.task/test-review-sonnet.json` | test-reviewer-sonnet |
+| `.task/test-review-opus.json` | test-reviewer-opus |
 
-### On Code Review Feedback
-If invoked after code review feedback:
-1. Read `.task/review-result.json`
-2. Address ALL `error` severity issues
-3. Address ALL `warning` severity issues
-4. Consider `suggestion` severity issues
+---
+
+## Review Handling
+
+### Internal Reviews (Subagents)
+
+**Planning phase** (before Codex plan review):
+- Run 2 code reviewers in parallel: code-reviewer-sonnet + code-reviewer-opus
+- Both must approve before proceeding to Codex
+
+**Implementation phase** (before Codex code review):
+- Run 6 reviewers in parallel (sonnet + opus for each type)
+- All 6 must approve before proceeding to Codex
+
+If any reviewer returns `needs_changes`, fix and re-review.
+
+### Codex Final Reviews
+
+Codex is called at two checkpoints:
+1. **End of planning** → `./scripts/run-codex-plan-review.sh`
+2. **End of implementation** → `./scripts/run-codex-review.sh`
+
+If Codex requests changes:
+- Return to previous phase (plan_refining or fixing)
+- Address ALL concerns
+- Re-run internal reviews
+- Submit for Codex review again
+
+---
+
+## Strict Loop-Until-Pass Model
+
+- Reviews loop until approved
+- No debate mechanism - accept all review feedback
+- Fix ALL issues raised by any reviewer
+
+> **Note**: Loop limits (planReviewLoopLimit: 10, codeReviewLoopLimit: 15) are defined in `pipeline.config.json` for reference. The main Claude thread should track iterations and enforce limits manually.
+
+---
 
 ## Asking for Clarification
 
-If the plan or task is too ambiguous, add to your output:
+If a plan or task is too ambiguous, add to your output:
+
 ```json
 {
   "needs_clarification": true,
@@ -208,4 +258,4 @@ If the plan or task is too ambiguous, add to your output:
 }
 ```
 
-Only use this for truly blocking questions.
+The orchestrator will transition to `needs_user_input` state.

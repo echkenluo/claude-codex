@@ -74,14 +74,34 @@ update_claude_md() {
       cat > "$PROJECT_ROOT/CLAUDE.md" << 'CLAUDE_EOF'
 # Claude Code - Multi-AI Pipeline Project
 
-> **IMPORTANT**: This project uses a multi-AI orchestrator workflow, NOT the standard PLAN.md workflow. These instructions override any global CLAUDE.md settings for this project.
+> **IMPORTANT**: This project uses a subagent-based orchestrator workflow. The main Claude Code thread coordinates subagents for planning, implementation, and internal reviews. Codex is called only at key checkpoints.
+
+## Architecture Overview
+
+```
+Main Claude Code Thread (Orchestrator)
+  │
+  ├── Subagents (do the work):
+  │     ├── planner (opus)      → Drafts and refines plans
+  │     ├── researcher (opus)   → Gathers codebase context
+  │     ├── implementer (opus)  → Writes code
+  │     ├── code-reviewer-sonnet + code-reviewer-opus     → Internal code quality (parallel)
+  │     ├── security-reviewer-sonnet + security-reviewer-opus → Security assessment (parallel)
+  │     └── test-reviewer-sonnet + test-reviewer-opus     → Test coverage (parallel)
+  │
+  └── Codex (final reviews only):
+        ├── End of planning phase (after 2 code reviewers approve)
+        └── End of implementation phase (after all 6 reviewers approve)
+```
+
+---
 
 ## When User Asks to Implement Something
 
-If a user directly asks you to implement a feature or make changes in this project, guide them to use the orchestrator workflow:
+Guide users to use the orchestrator workflow:
 
 ```
-This project uses a multi-AI orchestrator (Claude + Codex) for implementations.
+This project uses a subagent-based orchestrator (Claude subagents + Codex reviews).
 
 To implement your request:
 
@@ -93,136 +113,77 @@ To implement your request:
    ./scripts/orchestrator.sh
 
 The pipeline will:
-- Create and refine a plan (Claude)
-- Review the plan (Codex) - loops until approved
-- Implement the code (Claude)
-- Review the code (Codex) - loops until approved
+- Create and refine a plan (planner + researcher subagents)
+- Run internal plan reviews (code-reviewer-sonnet + code-reviewer-opus in parallel)
+- Final plan review (Codex)
+- Implement the code (implementer subagent)
+- Run internal code reviews (6 reviewers in parallel: code/security/test × sonnet/opus)
+- Final code review (Codex)
 
-For quick status: ./scripts/orchestrator.sh status
+For status: ./scripts/orchestrator.sh status
 For recovery: ./scripts/recover.sh
 ```
 
-Do NOT use the PLAN.md workflow for this project. The orchestrator handles planning, implementation, and review automatically.
+---
+
+## How the Orchestrator Works
+
+The orchestrator displays the current state and what action to take:
+
+```bash
+$ ./scripts/orchestrator.sh
+[INFO] Current state: plan_drafting
+
+ACTION: Invoke 'planner' subagent
+
+Task: Create initial plan from user request
+Input: .task/user-request.txt
+Output: .task/plan.json
+
+After completion, transition state:
+  ./scripts/state-manager.sh set plan_refining "$(jq -r .id .task/plan.json)"
+```
+
+### Workflow Steps
+
+1. **Read the ACTION** - See which subagent to invoke
+2. **Invoke the subagent** - Use Task tool with the specified agent
+3. **Write output file** - Subagent writes to the specified output location
+4. **Transition state** - Run the shown state-manager command
+5. **Run orchestrator again** - See the next action
 
 ---
 
-## Agent Instructions (When Invoked by Orchestrator)
+## Subagents
 
-You are the **implementation agent** in a two-AI development pipeline.
+Located in `.claude/agents/`:
 
-## Your Three Roles
+| Subagent | Purpose | When Invoked |
+|----------|---------|--------------|
+| `planner` | Drafts and refines plans | `plan_drafting`, `plan_refining` |
+| `researcher` | Gathers codebase context | `plan_refining` |
+| `implementer` | Writes code | `implementing`, `fixing` |
+| `code-reviewer-sonnet` | Quick code/plan review | After plan refinement, after implementation |
+| `code-reviewer-opus` | Deep code/plan review | After plan refinement, after implementation |
+| `security-reviewer-sonnet` | Quick security scan | After implementation |
+| `security-reviewer-opus` | Deep security analysis | After implementation |
+| `test-reviewer-sonnet` | Quick test check | After implementation |
+| `test-reviewer-opus` | Deep test review | After implementation |
 
-### Role 1: Plan Creator
-When invoked via `run-claude-plan-create.sh`:
-- Read user request from script argument
-- Create initial plan in `.task/plan.json`
-- Exit (orchestrator handles state transition)
-
-### Role 2: Plan Refiner
-When invoked via `run-claude-plan.sh` (state is `plan_refining`):
-- Read initial plan from `.task/plan.json`
-- Read any previous review feedback from `.task/plan-review.json`
-- Add technical details
-- Write to `.task/plan-refined.json`
-- Exit (orchestrator handles state transition)
-
-### Role 3: Code Implementer
-When invoked via `run-claude.sh` (state is `implementing` or `fixing`):
-- Read task from `.task/current-task.json`
-- Read any previous review feedback from `.task/review-result.json`
-- Implement following standards
-- Write to `.task/impl-result.json`
-- Exit (orchestrator handles state transition)
-
-## Important: Orchestrator Controls State
-- You do NOT modify `.task/state.json`
-- The orchestrator script handles all state transitions
-- Your job is to complete the task and write output files
+---
 
 ## Shared Knowledge
+
 Read these docs before any work:
 - `docs/standards.md` - Coding standards and review criteria
 - `docs/workflow.md` - Pipeline process and output formats
 
-## Strict Loop-Until-Pass Model
-- Reviews loop until Codex approves
-- No debate mechanism - accept all review feedback
-- Fix ALL issues raised by reviewer
-- Loop limits: planReviewLoopLimit (10), codeReviewLoopLimit (15)
-
-## Pipeline Integration
-
-### Plan Creation Output
-Write to: `.task/plan.json`
-
-Format:
-```json
-{
-  "id": "plan-YYYYMMDD-HHMMSS",
-  "title": "Short descriptive title",
-  "description": "What the user wants to achieve",
-  "requirements": ["req1", "req2"],
-  "created_at": "ISO8601",
-  "created_by": "claude"
-}
-```
-
-### Plan Refinement Output
-Write to: `.task/plan-refined.json`
-
-Format:
-```json
-{
-  "id": "plan-001",
-  "title": "Feature title",
-  "description": "What the user wants",
-  "requirements": ["req 1", "req 2"],
-  "technical_approach": "Detailed description of how to implement",
-  "files_to_modify": ["path/to/existing/file.ts"],
-  "files_to_create": ["path/to/new/file.ts"],
-  "dependencies": ["any new packages needed"],
-  "estimated_complexity": "low|medium|high",
-  "potential_challenges": [
-    "Challenge 1 and how to address it",
-    "Challenge 2 and how to address it"
-  ],
-  "refined_by": "claude",
-  "refined_at": "ISO8601"
-}
-```
-
-### Implementation Output
-Write to: `.task/impl-result.json`
-
-Format:
-```json
-{
-  "status": "completed|failed|needs_clarification",
-  "summary": "What was implemented",
-  "files_changed": ["path/to/file.ts"],
-  "tests_added": ["path/to/test.ts"],
-  "questions": []
-}
-```
-
-## Handling Review Feedback
-
-### On Plan Review Feedback
-If invoked after plan review feedback:
-1. Read `.task/plan-review.json`
-2. Address ALL concerns raised by Codex
-3. Update `.task/plan-refined.json` with improvements
-
-### On Code Review Feedback
-If invoked after code review feedback:
-1. Read `.task/review-result.json`
-2. Address ALL `error` severity issues
-3. Address ALL `warning` severity issues
-4. Consider `suggestion` severity issues
+---
 
 ## Asking for Clarification
 
-If the plan or task is too ambiguous, add to your output:
+If a plan or task is too ambiguous, add to your output:
+
 ```json
 {
   "needs_clarification": true,
@@ -233,7 +194,7 @@ If the plan or task is too ambiguous, add to your output:
 }
 ```
 
-Only use this for truly blocking questions.
+The orchestrator will transition to `needs_user_input` state.
 CLAUDE_EOF
       ;;
 
@@ -246,8 +207,8 @@ This project supports two workflows. Choose based on task complexity:
 ## Quick Tasks → Use Your Normal Workflow
 For simple changes, bug fixes, or small features, you can use your normal workflow (e.g., PLAN.md if configured globally).
 
-## Complex Tasks → Use the Orchestrator
-For larger features requiring multiple review cycles, use the multi-AI orchestrator:
+## Complex Tasks → Use the Subagent Orchestrator
+For larger features requiring multiple review cycles, use the subagent-based orchestrator:
 
 ```bash
 # 1. Create your request
@@ -258,130 +219,34 @@ echo "Your feature description" > .task/user-request.txt
 ./scripts/orchestrator.sh
 ```
 
-The orchestrator provides:
-- Automated plan review (Codex reviews Claude's plan)
-- Automated code review (Codex reviews Claude's implementation)
-- Loop-until-approved workflow (max 10 plan reviews, 15 code reviews)
+The orchestrator coordinates:
+- **Subagents** for planning, implementation, and internal reviews (dual-model: sonnet + opus)
+- **Codex** for final reviews (end of planning, end of implementation)
 
 ---
 
-## Agent Instructions (When Invoked by Orchestrator)
+## Subagents
 
-You are the **implementation agent** in a two-AI development pipeline.
+Located in `.claude/agents/`:
 
-## Your Three Roles
-
-### Role 1: Plan Creator
-When invoked via `run-claude-plan-create.sh`:
-- Read user request from script argument
-- Create initial plan in `.task/plan.json`
-- Exit (orchestrator handles state transition)
-
-### Role 2: Plan Refiner
-When invoked via `run-claude-plan.sh` (state is `plan_refining`):
-- Read initial plan from `.task/plan.json`
-- Read any previous review feedback from `.task/plan-review.json`
-- Add technical details
-- Write to `.task/plan-refined.json`
-- Exit (orchestrator handles state transition)
-
-### Role 3: Code Implementer
-When invoked via `run-claude.sh` (state is `implementing` or `fixing`):
-- Read task from `.task/current-task.json`
-- Read any previous review feedback from `.task/review-result.json`
-- Implement following standards
-- Write to `.task/impl-result.json`
-- Exit (orchestrator handles state transition)
-
-## Important: Orchestrator Controls State
-- You do NOT modify `.task/state.json`
-- The orchestrator script handles all state transitions
-- Your job is to complete the task and write output files
+| Subagent | Purpose |
+|----------|---------|
+| `planner` | Drafts and refines plans (opus) |
+| `researcher` | Gathers codebase context (opus) |
+| `implementer` | Writes code (opus) |
+| `code-reviewer-sonnet` / `code-reviewer-opus` | Internal code/plan quality review (parallel) |
+| `security-reviewer-sonnet` / `security-reviewer-opus` | Security assessment (parallel) |
+| `test-reviewer-sonnet` / `test-reviewer-opus` | Test coverage review (parallel) |
 
 ## Shared Knowledge
+
 Read these docs before any work:
 - `docs/standards.md` - Coding standards and review criteria
 - `docs/workflow.md` - Pipeline process and output formats
 
-## Strict Loop-Until-Pass Model
-- Reviews loop until Codex approves
-- No debate mechanism - accept all review feedback
-- Fix ALL issues raised by reviewer
-- Loop limits: planReviewLoopLimit (10), codeReviewLoopLimit (15)
-
-## Pipeline Integration
-
-### Plan Creation Output
-Write to: `.task/plan.json`
-
-Format:
-```json
-{
-  "id": "plan-YYYYMMDD-HHMMSS",
-  "title": "Short descriptive title",
-  "description": "What the user wants to achieve",
-  "requirements": ["req1", "req2"],
-  "created_at": "ISO8601",
-  "created_by": "claude"
-}
-```
-
-### Plan Refinement Output
-Write to: `.task/plan-refined.json`
-
-Format:
-```json
-{
-  "id": "plan-001",
-  "title": "Feature title",
-  "description": "What the user wants",
-  "requirements": ["req 1", "req 2"],
-  "technical_approach": "Detailed description of how to implement",
-  "files_to_modify": ["path/to/existing/file.ts"],
-  "files_to_create": ["path/to/new/file.ts"],
-  "dependencies": ["any new packages needed"],
-  "estimated_complexity": "low|medium|high",
-  "potential_challenges": [
-    "Challenge 1 and how to address it",
-    "Challenge 2 and how to address it"
-  ],
-  "refined_by": "claude",
-  "refined_at": "ISO8601"
-}
-```
-
-### Implementation Output
-Write to: `.task/impl-result.json`
-
-Format:
-```json
-{
-  "status": "completed|failed|needs_clarification",
-  "summary": "What was implemented",
-  "files_changed": ["path/to/file.ts"],
-  "tests_added": ["path/to/test.ts"],
-  "questions": []
-}
-```
-
-## Handling Review Feedback
-
-### On Plan Review Feedback
-If invoked after plan review feedback:
-1. Read `.task/plan-review.json`
-2. Address ALL concerns raised by Codex
-3. Update `.task/plan-refined.json` with improvements
-
-### On Code Review Feedback
-If invoked after code review feedback:
-1. Read `.task/review-result.json`
-2. Address ALL `error` severity issues
-3. Address ALL `warning` severity issues
-4. Consider `suggestion` severity issues
-
 ## Asking for Clarification
 
-If the plan or task is too ambiguous, add to your output:
+If a plan or task is too ambiguous, add to your output:
 ```json
 {
   "needs_clarification": true,
@@ -391,8 +256,6 @@ If the plan or task is too ambiguous, add to your output:
   ]
 }
 ```
-
-Only use this for truly blocking questions.
 CLAUDE_EOF
       ;;
   esac

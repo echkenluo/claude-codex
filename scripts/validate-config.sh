@@ -30,7 +30,6 @@ jq -e 'has("debate")' "$CONFIG" >/dev/null || { echo "FAIL: missing 'debate'"; e
 # Required autonomy keys
 jq -e '.autonomy | has("mode")' "$CONFIG" >/dev/null || { echo "FAIL: missing 'autonomy.mode'"; exit 1; }
 jq -e '.autonomy | has("approvalPoints")' "$CONFIG" >/dev/null || { echo "FAIL: missing 'autonomy.approvalPoints'"; exit 1; }
-jq -e '.autonomy | has("autoCommit")' "$CONFIG" >/dev/null || { echo "FAIL: missing 'autonomy.autoCommit'"; exit 1; }
 jq -e '.autonomy | has("maxAutoRetries")' "$CONFIG" >/dev/null || { echo "FAIL: missing 'autonomy.maxAutoRetries'"; exit 1; }
 jq -e '.autonomy | has("reviewLoopLimit")' "$CONFIG" >/dev/null || { echo "FAIL: missing 'autonomy.reviewLoopLimit'"; exit 1; }
 jq -e '.autonomy | has("planReviewLoopLimit")' "$CONFIG" >/dev/null || { echo "FAIL: missing 'autonomy.planReviewLoopLimit'"; exit 1; }

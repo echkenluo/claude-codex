@@ -39,8 +39,12 @@ show_status() {
 reset_to_idle() {
   echo -e "${YELLOW}Resetting pipeline to idle...${NC}"
   set_state "idle" ""
-  clear_awaiting_output
   rm -f .task/impl-result.json .task/review-result.json
+  rm -f .task/plan.json .task/plan-refined.json .task/plan-review.json
+  rm -f .task/current-task.json .task/user-request.txt
+  rm -f .task/internal-review-sonnet.json .task/internal-review-opus.json
+  rm -f .task/security-review-sonnet.json .task/security-review-opus.json
+  rm -f .task/test-review-sonnet.json .task/test-review-opus.json
   echo -e "${GREEN}Pipeline reset to idle${NC}"
 }
 
@@ -51,9 +55,6 @@ retry_current() {
   task_id=$(get_task_id)
   local previous_state
   previous_state=$(get_previous_state)
-
-  # Clear any stale awaiting_output flag from previous interactive run
-  clear_awaiting_output
 
   case "$status" in
     error)

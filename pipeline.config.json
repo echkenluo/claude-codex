@@ -9,7 +9,6 @@
       "review": false,
       "commit": true
     },
-    "autoCommit": false,
     "maxAutoRetries": 3,
     "reviewLoopLimit": 10,
     "planReviewLoopLimit": 10,
