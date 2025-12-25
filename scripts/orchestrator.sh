@@ -197,12 +197,8 @@ run_dry_run() {
   local required_agents=(
     "planner.md"
     "implementer.md"
-    "code-reviewer-sonnet.md"
-    "code-reviewer-opus.md"
-    "security-reviewer-sonnet.md"
-    "security-reviewer-opus.md"
-    "test-reviewer-sonnet.md"
-    "test-reviewer-opus.md"
+    "reviewer-sonnet.md"
+    "reviewer-opus.md"
     "researcher.md"
   )
   local agents_ok=1
@@ -332,8 +328,8 @@ show_next_action() {
       echo "Output: .task/plan-refined.json"
       echo ""
       echo "After completion, run internal reviews IN PARALLEL:"
-      echo "  1. Invoke 'code-reviewer-sonnet' → .task/internal-review-sonnet.json"
-      echo "  2. Invoke 'code-reviewer-opus' → .task/internal-review-opus.json"
+      echo "  1. Invoke 'reviewer-sonnet' → .task/internal-review-sonnet.json"
+      echo "  2. Invoke 'reviewer-opus' → .task/internal-review-opus.json"
       echo ""
       echo "If BOTH internal reviews approve, transition to Codex final review:"
       echo "  ./scripts/state-manager.sh set plan_reviewing \"\$(jq -r .id .task/plan-refined.json)\""
@@ -359,15 +355,13 @@ show_next_action() {
       fi
       echo "Output: .task/impl-result.json"
       echo ""
-      echo "After implementation, run internal reviews IN PARALLEL (all 6):"
-      echo "  Code:     'code-reviewer-sonnet' → .task/internal-review-sonnet.json"
-      echo "            'code-reviewer-opus' → .task/internal-review-opus.json"
-      echo "  Security: 'security-reviewer-sonnet' → .task/security-review-sonnet.json"
-      echo "            'security-reviewer-opus' → .task/security-review-opus.json"
-      echo "  Tests:    'test-reviewer-sonnet' → .task/test-review-sonnet.json"
-      echo "            'test-reviewer-opus' → .task/test-review-opus.json"
+      echo "After implementation, run internal reviews IN PARALLEL:"
+      echo "  1. Invoke 'reviewer-sonnet' → .task/internal-review-sonnet.json"
+      echo "  2. Invoke 'reviewer-opus' → .task/internal-review-opus.json"
       echo ""
-      echo "If ALL 6 internal reviews approve, transition to Codex final review:"
+      echo "Each reviewer covers code quality, security, and test coverage."
+      echo ""
+      echo "If BOTH internal reviews approve, transition to Codex final review:"
       echo "  ./scripts/state-manager.sh set reviewing \"\$(jq -r .id .task/current-task.json)\""
       ;;
     reviewing)
@@ -451,8 +445,7 @@ case "${1:-run}" in
     rm -f .task/plan.json .task/plan-refined.json .task/plan-review.json
     rm -f .task/current-task.json .task/user-request.txt
     rm -f .task/internal-review-sonnet.json .task/internal-review-opus.json
-    rm -f .task/security-review-sonnet.json .task/security-review-opus.json
-    rm -f .task/test-review-sonnet.json .task/test-review-opus.json
+    rm -f .task/.codex-session-active  # Clear Codex session marker
     log_success "Pipeline reset to idle"
     ;;
   dry-run|--dry-run)

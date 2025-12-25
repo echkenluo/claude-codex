@@ -89,9 +89,6 @@ codex exec \
   $USE_RESUME \
   "$PROMPT"
 
-# Mark session as active after successful Codex call
-touch "$SESSION_MARKER"
-
 # Verify output file was created and is valid JSON
 if [[ ! -f .task/plan-review.json ]]; then
   echo "ERROR: Codex did not create .task/plan-review.json" >&2
@@ -102,6 +99,9 @@ if ! jq empty .task/plan-review.json 2>/dev/null; then
   echo "ERROR: .task/plan-review.json is not valid JSON" >&2
   exit 1
 fi
+
+# Mark session as active only after successful validation
+touch "$SESSION_MARKER"
 
 echo "Plan review complete: .task/plan-review.json"
 cat .task/plan-review.json | jq '{status, summary}'

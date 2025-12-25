@@ -39,9 +39,6 @@ codex exec \
    Identify bugs, security issues, code style violations.
    Be specific with file paths and line numbers."
 
-# Mark session as active after successful Codex call
-touch "$SESSION_MARKER"
-
 # Verify output file was created and is valid JSON
 if [[ ! -f .task/review-result.json ]]; then
   echo "ERROR: Codex did not create .task/review-result.json" >&2
@@ -52,5 +49,8 @@ if ! jq empty .task/review-result.json 2>/dev/null; then
   echo "ERROR: .task/review-result.json is not valid JSON" >&2
   exit 1
 fi
+
+# Mark session as active only after successful validation
+touch "$SESSION_MARKER"
 
 echo "Review complete: .task/review-result.json"

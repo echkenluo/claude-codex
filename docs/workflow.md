@@ -17,14 +17,10 @@ Located in `.claude/agents/`:
 | `planner` | Drafts and refines plans | opus |
 | `implementer` | Writes code | opus |
 | `researcher` | Codebase exploration | opus |
-| `code-reviewer-sonnet` | Quick code/plan review | sonnet |
-| `code-reviewer-opus` | Deep code/plan review | opus |
-| `security-reviewer-sonnet` | Quick security scan | sonnet |
-| `security-reviewer-opus` | Deep security analysis | opus |
-| `test-reviewer-sonnet` | Quick test coverage check | sonnet |
-| `test-reviewer-opus` | Deep test quality review | opus |
+| `reviewer-sonnet` | Fast review (code + security + tests) | sonnet |
+| `reviewer-opus` | Deep review (code + security + tests) | opus |
 
-> **Dual Review Model**: Internal reviewers run in parallel with both sonnet and opus to get different perspectives. All reviews must approve before proceeding.
+> **Dual Review Model**: Internal reviewers run in parallel with both sonnet and opus to get different perspectives. Both must approve before proceeding.
 
 ---
 
@@ -45,7 +41,7 @@ plan_drafting
      ↓ (planner subagent creates initial plan)
 plan_refining
      ↓ (planner + researcher subagents refine)
-     ↓ (code-reviewer subagent internal review)
+     ↓ (reviewer-sonnet + reviewer-opus internal review)
      ↓ [loop until internally approved]
 plan_reviewing
      ↓ (Codex final review)
@@ -57,7 +53,7 @@ plan_reviewing
 1. `planner` → Creates initial plan from user request
 2. `researcher` → Gathers codebase context
 3. `planner` → Refines plan with technical details
-4. `code-reviewer` → Internal review (loops until solid)
+4. `reviewer-sonnet` + `reviewer-opus` → Internal review (loops until solid)
 5. **Codex** → Final plan review (only Codex call in planning phase)
 
 ### Phase 2: Implementation
@@ -65,7 +61,7 @@ plan_reviewing
 ```
 implementing
      ↓ (implementer subagent writes code)
-     ↓ (code-reviewer + security-reviewer + test-reviewer internal reviews)
+     ↓ (reviewer-sonnet + reviewer-opus internal reviews)
      ↓ [loop until internally approved]
 reviewing
      ↓ (Codex final review)
@@ -75,10 +71,8 @@ reviewing
 
 **Subagent Flow:**
 1. `implementer` → Writes code following standards
-2. `code-reviewer` → Internal code quality check
-3. `security-reviewer` → Security assessment
-4. `test-reviewer` → Test coverage check
-5. **Codex** → Final code review (only Codex call in implementation phase)
+2. `reviewer-sonnet` + `reviewer-opus` → Internal review (code + security + tests)
+3. **Codex** → Final code review (only Codex call in implementation phase)
 
 ---
 
@@ -139,7 +133,7 @@ idle
   ↓
 plan_drafting (planner subagent)
   ↓
-plan_refining (planner + researcher + code-reviewer internal loop)
+plan_refining (planner + researcher + reviewer internal loop)
   ↓
 plan_reviewing (Codex final review) ←──────────────────┐
   ↓                                                    │
@@ -160,10 +154,10 @@ complete
 |------|----|---------|
 | `idle` | `plan_drafting` | User sets state with user-request.txt |
 | `plan_drafting` | `plan_refining` | Planner creates initial plan |
-| `plan_refining` | `plan_reviewing` | Both code reviewers approve (sonnet + opus) |
+| `plan_refining` | `plan_reviewing` | Both reviewers approve (sonnet + opus) |
 | `plan_reviewing` | `plan_refining` | Codex requests changes |
 | `plan_reviewing` | `implementing` | Codex approves → Claude Code runs plan-to-task.sh |
-| `implementing` | `reviewing` | All internal reviews approve (6 reviewers) |
+| `implementing` | `reviewing` | Both internal reviewers approve (sonnet + opus) |
 | `reviewing` | `complete` | Codex approves |
 | `reviewing` | `fixing` | Codex requests changes |
 | `reviewing` | `error` | Codex rejects (fundamentally flawed) |
@@ -209,37 +203,26 @@ complete
 
 ### Internal review outputs (dual-model)
 
-Each review type runs with both sonnet and opus models in parallel:
+Each reviewer covers code quality, security, and test coverage:
 
 | File | Reviewer |
 |------|----------|
-| `.task/internal-review-sonnet.json` | code-reviewer-sonnet |
-| `.task/internal-review-opus.json` | code-reviewer-opus |
-| `.task/security-review-sonnet.json` | security-reviewer-sonnet |
-| `.task/security-review-opus.json` | security-reviewer-opus |
-| `.task/test-review-sonnet.json` | test-reviewer-sonnet |
-| `.task/test-review-opus.json` | test-reviewer-opus |
+| `.task/internal-review-sonnet.json` | reviewer-sonnet |
+| `.task/internal-review-opus.json` | reviewer-opus |
 
-> **Planning phase**: 2 code reviewers must approve (code-reviewer-sonnet + opus).
-> **Implementation phase**: All 6 reviewers must approve before proceeding to Codex final review.
+> **Both phases**: 2 reviewers must approve (sonnet + opus) before proceeding to Codex final review.
 
 Format:
 ```json
 {
   "status": "approved|needs_changes",
-  "reviewer": "code-reviewer-sonnet",
+  "reviewer": "reviewer-sonnet",
   "model": "sonnet",
   "reviewed_at": "ISO8601",
   "summary": "Review summary",
-  "issues": [
-    {
-      "severity": "error|warning|suggestion",
-      "file": "path/to/file.ts",
-      "line": 42,
-      "issue": "Description",
-      "suggestion": "How to fix"
-    }
-  ]
+  "code_issues": [...],
+  "security_issues": [...],
+  "test_issues": [...]
 }
 ```
 
@@ -345,18 +328,33 @@ Create `pipeline.config.local.json` for local overrides (gitignored):
 
 ## Codex Session Resume
 
-Codex reviews use `resume --last` to carry forward context from previous sessions:
+Codex reviews conditionally use `resume --last` to carry forward context:
+
+- **First review** (new task): Fresh session, no resume
+- **Subsequent reviews**: Uses `resume --last` for context continuity
 
 ```bash
-codex exec resume --last \
+# First review (no resume)
+codex exec \
   --full-auto \
-  --model o3 \
+  --model "$MODEL" \
   --output-schema docs/schemas/review-result.schema.json \
   -o .task/review-result.json \
   "Review the implementation..."
+
+# Subsequent reviews (with resume)
+codex exec \
+  --full-auto \
+  --model "$MODEL" \
+  --output-schema docs/schemas/review-result.schema.json \
+  -o .task/review-result.json \
+  resume --last \
+  "Review the implementation..."
 ```
 
-This reduces token usage by maintaining context across review iterations.
+Session tracking uses `.task/.codex-session-active` marker:
+- Created after first successful Codex call
+- Cleared when entering `plan_drafting` or via reset
 
 ---
 

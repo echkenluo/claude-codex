@@ -8,12 +8,11 @@
 Main Claude Code Thread (Orchestrator)
   │
   ├── Subagents (do the work):
-  │     ├── planner       → Drafts and refines plans
-  │     ├── researcher    → Gathers codebase context
-  │     ├── implementer   → Writes code
-  │     ├── code-reviewer → Internal code quality review
-  │     ├── security-reviewer → Security assessment
-  │     └── test-reviewer → Test coverage review
+  │     ├── planner         → Drafts and refines plans
+  │     ├── researcher      → Gathers codebase context
+  │     ├── implementer     → Writes code
+  │     ├── reviewer-sonnet → Fast internal review (code + security + tests)
+  │     └── reviewer-opus   → Deep internal review (code + security + tests)
   │
   └── Codex (final reviews only):
         ├── End of planning phase
@@ -40,10 +39,10 @@ To implement your request:
 
 The pipeline will:
 - Create and refine a plan (planner + researcher subagents)
-- Run internal reviews (code-reviewer subagent)
+- Run internal reviews (reviewer-sonnet + reviewer-opus)
 - Final plan review (Codex)
 - Implement the code (implementer subagent)
-- Run internal reviews (code-reviewer + security-reviewer + test-reviewer)
+- Run internal reviews (reviewer-sonnet + reviewer-opus)
 - Final code review (Codex)
 
 For status: ./scripts/orchestrator.sh status
@@ -89,14 +88,10 @@ Located in `.claude/agents/`:
 | `planner` | Drafts and refines plans | opus |
 | `researcher` | Gathers codebase context | opus |
 | `implementer` | Writes code | opus |
-| `code-reviewer-sonnet` | Quick code/plan review | sonnet |
-| `code-reviewer-opus` | Deep code/plan review | opus |
-| `security-reviewer-sonnet` | Quick security scan | sonnet |
-| `security-reviewer-opus` | Deep security analysis | opus |
-| `test-reviewer-sonnet` | Quick test check | sonnet |
-| `test-reviewer-opus` | Deep test review | opus |
+| `reviewer-sonnet` | Fast review (code + security + tests) | sonnet |
+| `reviewer-opus` | Deep review (code + security + tests) | opus |
 
-> **Dual Review Model**: Internal reviewers run in parallel with both sonnet and opus models to get different perspectives. ALL must approve before proceeding to Codex.
+> **Dual Review Model**: Internal reviewers run in parallel with both sonnet and opus models to get different perspectives. Both must approve before proceeding to Codex.
 
 ### Invoking Subagents
 
@@ -116,7 +111,7 @@ idle
   ↓
 plan_drafting (planner subagent)
   ↓
-plan_refining (planner + researcher + code-reviewer internal loop)
+plan_refining (planner + researcher + reviewer internal loop)
   ↓
 plan_reviewing (Codex final review) ←──────────────────┐
   ↓                                                    │
@@ -197,12 +192,8 @@ Write to: `.task/impl-result.json`
 
 | File | Reviewer |
 |------|----------|
-| `.task/internal-review-sonnet.json` | code-reviewer-sonnet |
-| `.task/internal-review-opus.json` | code-reviewer-opus |
-| `.task/security-review-sonnet.json` | security-reviewer-sonnet |
-| `.task/security-review-opus.json` | security-reviewer-opus |
-| `.task/test-review-sonnet.json` | test-reviewer-sonnet |
-| `.task/test-review-opus.json` | test-reviewer-opus |
+| `.task/internal-review-sonnet.json` | reviewer-sonnet |
+| `.task/internal-review-opus.json` | reviewer-opus |
 
 ---
 
@@ -210,13 +201,10 @@ Write to: `.task/impl-result.json`
 
 ### Internal Reviews (Subagents)
 
-**Planning phase** (before Codex plan review):
-- Run 2 code reviewers in parallel: code-reviewer-sonnet + code-reviewer-opus
+**Both planning and implementation phases**:
+- Run 2 reviewers in parallel: reviewer-sonnet + reviewer-opus
+- Each reviewer covers code quality, security, and test coverage
 - Both must approve before proceeding to Codex
-
-**Implementation phase** (before Codex code review):
-- Run 6 reviewers in parallel (sonnet + opus for each type)
-- All 6 must approve before proceeding to Codex
 
 If any reviewer returns `needs_changes`, fix and re-review.
 

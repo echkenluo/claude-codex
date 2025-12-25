@@ -14,7 +14,7 @@ A development pipeline that orchestrates multiple AI agents to plan, implement, 
 ## Architecture
 
 - **Claude Code (Main Thread)** - Orchestrator only, coordinates subagents
-- **Claude Subagents** - Specialized agents for planning, implementing, code review, security review, test review
+- **Claude Subagents** - Specialized agents for planning, implementing, and internal review (code + security + tests)
 - **Codex CLI** - Final plan review + Final code review (2 calls per feature)
 
 > **Interested in running 3 AIs?** Check out [claude-codex-gemini](https://github.com/Z-M-Huang/claude-codex-gemini) which adds Gemini as a dedicated orchestrator.
@@ -28,7 +28,7 @@ Claude Code (main thread) orchestrates the workflow based on `./scripts/orchestr
 ```
 User Request → planner (opus) → researcher (opus)
                                        ↓
-              code-reviewer-sonnet + code-reviewer-opus (parallel)
+              reviewer-sonnet + reviewer-opus (parallel)
                         ↑              ↓
                         └── loop until both approve
                                        ↓
@@ -42,12 +42,10 @@ User Request → planner (opus) → researcher (opus)
 ```
 Task → implementer (opus)
               ↓
-   6 internal reviewers in parallel:
-   - code-reviewer-sonnet + code-reviewer-opus
-   - security-reviewer-sonnet + security-reviewer-opus
-   - test-reviewer-sonnet + test-reviewer-opus
+   reviewer-sonnet + reviewer-opus (parallel)
+   (each covers code + security + tests)
               ↑              ↓
-              └── loop until all 6 approve
+              └── loop until both approve
                              ↓
               Codex (FINAL code review)
                              ↓
@@ -58,12 +56,12 @@ Task → implementer (opus)
 2. User sets state to `plan_drafting` and runs orchestrator
 3. Claude Code invokes **planner** subagent → creates `plan.json`
 4. Claude Code invokes **planner + researcher** → refines plan
-5. Claude Code invokes **code-reviewer-sonnet + opus** in parallel (both must approve)
+5. Claude Code invokes **reviewer-sonnet + reviewer-opus** in parallel (both must approve)
 6. Claude Code runs **Codex final plan review**
 7. If needs changes, back to step 4 (max 10 iterations)
 8. Claude Code runs **plan-to-task.sh** → converts to task
 9. Claude Code invokes **implementer** subagent
-10. Claude Code invokes **6 internal reviewers** in parallel (all must approve)
+10. Claude Code invokes **reviewer-sonnet + reviewer-opus** in parallel (both must approve)
 11. Claude Code runs **Codex final code review**
 12. If needs changes, back to step 9 (max 15 iterations)
 13. Complete
@@ -245,16 +243,12 @@ your-project/
 ├── CLAUDE.md                 # Claude orchestrator instructions
 ├── AGENTS.md                 # Codex reviewer instructions
 ├── .claude/
-│   └── agents/               # Claude Code subagents (9 agents)
+│   └── agents/               # Claude Code subagents (5 agents)
 │       ├── planner.md        # Plan drafting/refinement
 │       ├── implementer.md    # Code implementation
 │       ├── researcher.md     # Codebase exploration
-│       ├── code-reviewer-sonnet.md   # Quick code review (sonnet)
-│       ├── code-reviewer-opus.md     # Deep code review (opus)
-│       ├── security-reviewer-sonnet.md  # Quick security scan
-│       ├── security-reviewer-opus.md    # Deep security analysis
-│       ├── test-reviewer-sonnet.md   # Quick test check
-│       └── test-reviewer-opus.md     # Deep test review
+│       ├── reviewer-sonnet.md   # Fast review (code + security + tests)
+│       └── reviewer-opus.md     # Deep review (code + security + tests)
 ├── docs/
 │   ├── standards.md          # Coding + review standards
 │   ├── workflow.md           # Process documentation
@@ -310,10 +304,10 @@ The orchestrator will show the current state and next action. You invoke the app
 
 1. **Plan drafting** → planner subagent creates initial plan
 2. **Plan refining** → planner + researcher subagents refine
-3. **Internal plan review** → code-reviewer-sonnet + code-reviewer-opus (parallel)
+3. **Internal plan review** → reviewer-sonnet + reviewer-opus (parallel)
 4. **Codex plan review** → final plan approval
 5. **Implementing** → implementer subagent writes code
-6. **Internal code reviews** → 6 reviewers in parallel (sonnet + opus for code/security/test)
+6. **Internal code reviews** → reviewer-sonnet + reviewer-opus (parallel, each covers code + security + tests)
 7. **Codex code review** → final code approval
 8. **Complete** → commit changes manually
 
@@ -339,7 +333,7 @@ Validate your pipeline setup without running it:
 - `.task/` directory and state file validity
 - `pipeline.config.json` valid JSON syntax
 - Required scripts present and executable (8 scripts)
-- Required subagents in `.claude/agents/` (9 agents with dual-model reviewers)
+- Required subagents in `.claude/agents/` (5 agents with dual-model reviewers)
 - Required docs (`standards.md`, `workflow.md`)
 - `.task` in `.gitignore`
 - CLI tools (`jq` required, `claude`/`codex` optional)
