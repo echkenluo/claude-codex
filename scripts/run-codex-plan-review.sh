@@ -4,9 +4,16 @@ set -e
 # Run Codex to review the refined plan
 # Uses structured output for consistent review format
 # Uses resume --last for subsequent reviews to save tokens
+#
+# Usage:
+#   ./scripts/run-codex-plan-review.sh                    # First review (no message needed)
+#   ./scripts/run-codex-plan-review.sh "Your message"    # Subsequent reviews (message REQUIRED)
 
 # Session marker file - tracks if Codex has been called for this task
 SESSION_MARKER=".task/.codex-session-active"
+
+# Get optional message from command line argument
+USER_MESSAGE="${1:-}"
 
 # Read model from config
 # Merge local config if it exists
@@ -23,7 +30,18 @@ PLAN=$(cat .task/plan-refined.json)
 # Determine if this is a subsequent review (resume session)
 if [[ -f "$SESSION_MARKER" ]]; then
   IS_RESUME=true
-  echo "[INFO] Resuming Codex session - will include changes summary"
+  # Require message for subsequent reviews
+  if [[ -z "$USER_MESSAGE" ]]; then
+    echo "ERROR: Subsequent reviews require a message explaining what changed." >&2
+    echo "" >&2
+    echo "Usage: $0 \"Your message describing changes made\"" >&2
+    echo "" >&2
+    echo "Example:" >&2
+    echo "  $0 \"Simplified the technical approach as requested\"" >&2
+    echo "  $0 \"Added error handling strategy, clarified requirements\"" >&2
+    exit 1
+  fi
+  echo "[INFO] Resuming Codex session with message"
 else
   IS_RESUME=false
   echo "[INFO] Starting fresh Codex session (first review for this task)"
@@ -35,6 +53,9 @@ if [[ "$IS_RESUME" == true ]]; then
   PROMPT="## IMPORTANT: This is a follow-up review
 
 The plan has been UPDATED based on your previous feedback. Please re-read and re-review the refined plan below.
+
+### Developer Notes:
+${USER_MESSAGE}
 
 ---
 

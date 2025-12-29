@@ -1,14 +1,21 @@
 #!/bin/bash
 set -e
 
-# Run Codex with --output-schema for guaranteed JSON format
+# Run Codex to review implementation
 # --full-auto: convenience alias for low-friction sandbox with on-request approvals
 # --output-schema: enforce output matches our review schema
 # -o: write output to file
 # Uses resume --last for subsequent reviews to save tokens
+#
+# Usage:
+#   ./scripts/run-codex-review.sh                    # First review (no message needed)
+#   ./scripts/run-codex-review.sh "Your message"    # Subsequent reviews (message REQUIRED)
 
 # Session marker file - tracks if Codex has been called for this task
 SESSION_MARKER=".task/.codex-session-active"
+
+# Get optional message from command line argument
+USER_MESSAGE="${1:-}"
 
 # Read model from config
 if [[ -f pipeline.config.local.json ]]; then
@@ -20,7 +27,18 @@ fi
 # Determine if this is a subsequent review (resume session)
 if [[ -f "$SESSION_MARKER" ]]; then
   IS_RESUME=true
-  echo "[INFO] Resuming Codex session - will include changes summary"
+  # Require message for subsequent reviews
+  if [[ -z "$USER_MESSAGE" ]]; then
+    echo "ERROR: Subsequent reviews require a message explaining what changed." >&2
+    echo "" >&2
+    echo "Usage: $0 \"Your message describing changes made\"" >&2
+    echo "" >&2
+    echo "Example:" >&2
+    echo "  $0 \"Fixed the SQL injection issue by using parameterized queries\"" >&2
+    echo "  $0 \"Added input validation as requested, updated error handling\"" >&2
+    exit 1
+  fi
+  echo "[INFO] Resuming Codex session with message"
 else
   IS_RESUME=false
   echo "[INFO] Starting fresh Codex session (first review for this task)"
@@ -41,13 +59,25 @@ if [[ "$IS_RESUME" == true ]]; then
   fi
 fi
 
+# Build user message section if provided
+USER_MESSAGE_SECTION=""
+if [[ -n "$USER_MESSAGE" ]]; then
+  USER_MESSAGE_SECTION="
+### Developer Notes:
+${USER_MESSAGE}
+
+---
+"
+  echo "[INFO] Including developer message in prompt"
+fi
+
 # Build the prompt based on whether this is a resume or fresh start
 if [[ "$IS_RESUME" == true ]]; then
   # For resume: shorter prompt focusing on what changed
   PROMPT="## IMPORTANT: This is a follow-up review
 
 The implementation has been UPDATED based on your previous feedback.
-
+${USER_MESSAGE_SECTION}
 ### Files Changed Since Last Review:
 ${CHANGED_FILES:-"(Unable to determine - please re-check all files in impl-result.json)"}
 
@@ -63,8 +93,9 @@ Identify bugs, security issues, code style violations.
 Be specific with file paths and line numbers."
 
 else
-  # First review: full prompt
+  # First review: full prompt (with optional user message)
   PROMPT="Review the implementation in .task/impl-result.json.
+${USER_MESSAGE_SECTION}
 Check against docs/standards.md.
 Identify bugs, security issues, code style violations.
 Be specific with file paths and line numbers."

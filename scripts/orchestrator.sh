@@ -334,7 +334,12 @@ show_next_action() {
     plan_reviewing)
       echo "ACTION: Run Codex final plan review"
       echo ""
-      echo "Command: ./scripts/run-codex-plan-review.sh"
+      if [[ -f .task/.codex-session-active ]]; then
+        echo "Command: ./scripts/run-codex-plan-review.sh \"<message describing what changed>\""
+        echo "         (Message REQUIRED for subsequent reviews)"
+      else
+        echo "Command: ./scripts/run-codex-plan-review.sh"
+      fi
       echo "Output: .task/plan-review.json"
       echo ""
       echo "After Codex review:"
@@ -364,7 +369,12 @@ show_next_action() {
     reviewing)
       echo "ACTION: Run Codex final code review"
       echo ""
-      echo "Command: ./scripts/run-codex-review.sh"
+      if [[ -f .task/.codex-session-active ]]; then
+        echo "Command: ./scripts/run-codex-review.sh \"<message describing what changed>\""
+        echo "         (Message REQUIRED for subsequent reviews)"
+      else
+        echo "Command: ./scripts/run-codex-review.sh"
+      fi
       echo "Output: .task/review-result.json"
       echo ""
       echo "After Codex review:"
