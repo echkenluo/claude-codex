@@ -1,70 +1,82 @@
 # Multi-AI Orchestration Pipeline
 
-A development pipeline that orchestrates multiple AI agents to plan, implement, review, and iterate on code changes.
+A development pipeline that orchestrates multiple AI models to plan, implement, review, and iterate on code changes.
 
 ## Recommended Subscriptions
 
 | Service | Subscription | Purpose |
 |---------|--------------|---------|
-| **Claude Code** | MAX 20 | Main thread (planning, coding) + Reviewer subagents (internal reviews) |
-| **Codex CLI** | Plus | Final reviews only (end of planning, end of implementation) |
+| **Claude Code** | MAX 20 | Main thread (planning, coding) + Review skills |
+| **Codex CLI** | Plus | Final reviews (invoked via skill) |
 
-> **Note**: This architecture minimizes Codex usage by using Claude subagents for internal review loops, calling Codex only at key checkpoints.
+> **Note**: This architecture uses skill-based sequential reviews with forked context isolation for token efficiency.
 
 ## Architecture
 
 - **Claude Code (Main Thread)** - Does planning, research, and implementation directly
-- **Reviewer Subagents** - Two reviewers for internal review (code + security + tests)
-- **Codex CLI** - Final plan review + Final code review (2 calls per feature)
+- **Review Skills** - Three skills for sequential review (sonnet → opus → codex)
+- **Codex CLI** - Invoked by review-codex skill for final reviews
 
 > **Interested in running 3 AIs?** Check out [claude-codex-gemini](https://github.com/Z-M-Huang/claude-codex-gemini) which adds Gemini as a dedicated orchestrator.
 
 ## How It Works
 
-Claude Code (main thread) orchestrates the workflow based on `./scripts/orchestrator.sh` instructions.
+### Quick Start with `/multi-ai`
+
+The easiest way to use this pipeline:
+
+```
+/multi-ai Add user authentication with JWT tokens
+```
+
+This command:
+1. Cleans up previous task files
+2. Creates and refines a plan
+3. Runs sequential reviews (sonnet → opus → codex)
+4. Implements the code
+5. Runs sequential reviews (sonnet → opus → codex)
+6. Marks complete
+
+### Sequential Review Flow
+
+Reviews run **sequentially** - each model reviews only ONCE per cycle:
+
+```
+Plan/Code → /review-sonnet → fix → /review-opus → fix → /review-codex → fix (restart)
+```
+
+**Key benefits**:
+- Each model provides unique perspective without re-reviewing
+- Progressive refinement (fast → deep → final)
+- Token-efficient (forked context isolation)
 
 ### Phase 1: Planning
 
 ```
 User Request → Main Thread (creates & refines plan)
                                        ↓
-              reviewer-sonnet + reviewer-opus (parallel)
-                        ↑              ↓
-                        └── loop until both approve
+                         /review-sonnet (fast review)
                                        ↓
-                        Codex (FINAL plan review)
+                         /review-opus (deep review)
                                        ↓
-              Claude Code runs plan-to-task.sh → implementing
+                         /review-codex (final review)
+                                       ↓
+                              implementing
 ```
 
 ### Phase 2: Implementation
 
 ```
-Task → Main Thread (implements code)
-              ↓
-   reviewer-sonnet + reviewer-opus (parallel)
-   (each covers code + security + tests)
-              ↑              ↓
-              └── loop until both approve
-                             ↓
-              Codex (FINAL code review)
-                             ↓
-                        complete
+Plan → Main Thread (implements code)
+                    ↓
+       /review-sonnet (fast review)
+                    ↓
+       /review-opus (deep review)
+                    ↓
+       /review-codex (final review)
+                    ↓
+               complete
 ```
-
-1. User creates `.task/user-request.txt` with feature description
-2. User sets state to `plan_drafting` and runs orchestrator
-3. Main thread creates `plan.json` from user request
-4. Main thread researches codebase and refines plan
-5. Claude Code invokes **reviewer-sonnet + reviewer-opus** in parallel (both must approve)
-6. Claude Code runs **Codex final plan review**
-7. If needs changes, back to step 4 (max 10 iterations)
-8. Claude Code runs **plan-to-task.sh** → converts to task
-9. Main thread implements the code
-10. Claude Code invokes **reviewer-sonnet + reviewer-opus** in parallel (both must approve)
-11. Claude Code runs **Codex final code review**
-12. If needs changes, back to step 9 (max 15 iterations)
-13. Complete
 
 ## Prerequisites
 
@@ -91,9 +103,6 @@ Task → Main Thread (implements code)
    # Edit standards to match your project
    vim docs/standards.md
 
-   # Update workflow documentation
-   vim docs/workflow.md
-
    # Configure models and autonomy level
    vim pipeline.config.json
    ```
@@ -104,20 +113,21 @@ Task → Main Thread (implements code)
    ./scripts/setup.sh
    ```
 
-   This checks for global `~/.claude/CLAUDE.md` that might conflict with the orchestrator workflow and lets you choose:
-   - **Orchestrator Only**: Force all implementations through the multi-AI pipeline
-   - **Hybrid Mode**: Allow both your normal workflow and the orchestrator
-
-4. **Initialize the pipeline:**
+4. **Copy skills to personal directory (for hot-reload):**
 
    ```bash
-   ./scripts/state-manager.sh init
-
-   # Tell git to ignore local changes to state files
-   git update-index --skip-worktree .task/state.json .task/tasks.json
+   cp -r .claude/skills/* ~/.claude/skills/
    ```
 
-5. **Create a user request:**
+5. **Start the pipeline:**
+
+   ```bash
+   /multi-ai Add your feature description here
+   ```
+
+### Option B: Manual Workflow
+
+1. **Create a user request:**
 
    ```bash
    cat > .task/user-request.txt << 'EOF'
@@ -129,111 +139,14 @@ Task → Main Thread (implements code)
    EOF
    ```
 
-6. **Run the planning phase:**
+2. **Run the pipeline:**
 
    ```bash
    ./scripts/state-manager.sh set plan_drafting ""
    ./scripts/orchestrator.sh
-   # Orchestrator shows current state and next action
-   # Main thread does planning/implementation; invoke reviewer subagents via Task tool
-   # Repeat until pipeline completes
    ```
 
-7. **Check status anytime:**
-   ```bash
-   ./scripts/orchestrator.sh status
-   ```
-
-### Option B: Adopt for Existing Projects
-
-1. **Copy the pipeline files to your project:**
-
-   ```bash
-   # From the claude-codex directory
-   cp -r scripts/ /path/to/your/project/
-   cp -r docs/ /path/to/your/project/
-   cp -r .claude/ /path/to/your/project/    # Subagents (required)
-   cp pipeline.config.json /path/to/your/project/
-   cp CLAUDE.md AGENTS.md /path/to/your/project/
-   mkdir -p /path/to/your/project/.task
-   ```
-
-2. **Add to .gitignore:**
-
-   ```bash
-   echo ".task/*" >> /path/to/your/project/.gitignore
-   echo "!.task/state.json" >> /path/to/your/project/.gitignore
-   echo "!.task/tasks.json" >> /path/to/your/project/.gitignore
-   ```
-
-3. **Customize docs/standards.md for your project:**
-
-   Update the coding standards to match your existing conventions:
-
-   - Naming conventions (files, classes, functions)
-   - Code style rules
-   - Testing requirements
-   - Security requirements
-
-4. **Update the agent config files:**
-
-   Edit `CLAUDE.md` and `AGENTS.md` to reference your project-specific context.
-
-5. **Configure the pipeline:**
-
-   The provided `pipeline.config.json` works out of the box. Customize as needed:
-
-   ```json
-   {
-     "version": "1.0.0",
-     "autonomy": {
-       "mode": "semi-autonomous",
-       "approvalPoints": { "planning": false, "implementation": false, "review": false, "commit": true },
-       "maxAutoRetries": 3,
-       "reviewLoopLimit": 10,
-       "planReviewLoopLimit": 10,
-       "codeReviewLoopLimit": 15
-     },
-     "models": {
-       "orchestrator": { "provider": "claude", "model": "opus", "temperature": 0.7 },
-       "coder": { "provider": "claude", "model": "opus", "temperature": 0.3 },
-       "reviewer": { "provider": "openai", "model": "gpt-5.2-codex", "reasoning": "high", "temperature": 0.2 }
-     },
-     "errorHandling": { "autoResolveAttempts": 3, "pauseOnUnresolvable": true, "notifyOnError": true, "errorLogRetention": "30d" },
-     "commit": { "strategy": "per-task", "messageFormat": "conventional", "signOff": true, "branch": { "createFeatureBranch": true, "namePattern": "feature/{task-id}-{short-title}" } },
-     "notifications": { "onTaskComplete": true, "onReviewFeedback": true, "onError": true, "onPipelineIdle": true },
-     "timeouts": { "implementation": 600, "review": 300, "autoResolve": 180 },
-     "debate": { "enabled": false, "maxRounds": 0, "timeoutSeconds": 0 }
-   }
-   ```
-
-6. **Initialize and run:**
-   ```bash
-   cd /path/to/your/project
-   ./scripts/state-manager.sh init
-   ```
-
-## After Cloning
-
-The `.task/` folder contains initial state files that are tracked in git but should not have local changes committed. After cloning, run:
-
-```bash
-git update-index --skip-worktree .task/state.json .task/tasks.json
-```
-
-This tells git to ignore your local modifications to these files.
-
-**To check skip-worktree status:**
-
-```bash
-git ls-files -v .task/ | grep '^S'  # S = skip-worktree is set
-```
-
-**To undo (if you need to commit changes):**
-
-```bash
-git update-index --no-skip-worktree .task/state.json
-```
+3. **Follow orchestrator instructions** to create plan, run reviews, implement, etc.
 
 ## Project Structure
 
@@ -243,9 +156,11 @@ your-project/
 ├── CLAUDE.md                 # Claude orchestrator instructions
 ├── AGENTS.md                 # Codex reviewer instructions
 ├── .claude/
-│   └── agents/               # Claude Code subagents (2 reviewers only)
-│       ├── reviewer-sonnet.md   # Fast review (code + security + tests)
-│       └── reviewer-opus.md     # Deep review (code + security + tests)
+│   └── skills/               # Review and orchestration skills
+│       ├── review-sonnet/    # Fast review (sonnet model)
+│       ├── review-opus/      # Deep review (opus model)
+│       ├── review-codex/     # Final review (codex)
+│       └── multi-ai/         # Pipeline entry point command
 ├── docs/
 │   ├── standards.md          # Coding + review standards
 │   ├── workflow.md           # Process documentation
@@ -254,59 +169,30 @@ your-project/
 │       └── plan-review.schema.json     # Plan review output schema
 ├── scripts/
 │   ├── orchestrator.sh       # Main pipeline loop (status/reset/dry-run)
-│   ├── run-codex-review.sh   # Codex final code review
-│   ├── run-codex-plan-review.sh  # Codex final plan review
-│   ├── plan-to-task.sh       # Convert approved plan to task
 │   ├── state-manager.sh      # State management
-│   ├── validate-config.sh    # Config validation
 │   ├── recover.sh            # Recovery tool
 │   └── setup.sh              # Setup wizard
 └── .task/                    # Runtime state (gitignored except state files)
     ├── state.json            # Pipeline state
-    ├── tasks.json            # Task queue
     ├── user-request.txt      # User's feature request (input)
     ├── plan.json             # Initial plan
     ├── plan-refined.json     # Refined plan
-    ├── plan-review.json      # Plan review (Codex)
-    ├── current-task.json     # Active task
     ├── impl-result.json      # Implementation output
-    └── review-result.json    # Code review (Codex)
+    ├── review-sonnet.json    # Sonnet review output
+    ├── review-opus.json      # Opus review output
+    └── review-codex.json     # Codex review output
 ```
+
+## Skills
+
+| Skill | Model | Purpose |
+|-------|-------|---------|
+| `/review-sonnet` | sonnet | Fast review (code + security + tests) |
+| `/review-opus` | opus | Deep review (architecture + subtle issues) |
+| `/review-codex` | codex | Final review via Codex CLI |
+| `/multi-ai` | - | Pipeline entry point (starts full workflow) |
 
 ## Usage
-
-### Starting from a User Request
-
-**Step 1: Create the user request file**
-
-```bash
-cat > .task/user-request.txt << 'EOF'
-Add user authentication with JWT-based tokens.
-Requirements:
-- POST /api/login endpoint
-- POST /api/logout endpoint
-- JWT token validation middleware
-- Unit tests for auth functions
-EOF
-```
-
-**Step 2: Start the pipeline from plan drafting**
-
-```bash
-./scripts/state-manager.sh set plan_drafting ""
-./scripts/orchestrator.sh
-```
-
-The orchestrator will show the current state and next action. The main thread handles planning and implementation, while reviewer subagents provide internal reviews. The workflow proceeds through these phases:
-
-1. **Plan drafting** → main thread creates initial plan
-2. **Plan refining** → main thread researches and refines plan
-3. **Internal plan review** → reviewer-sonnet + reviewer-opus (parallel)
-4. **Codex plan review** → final plan approval
-5. **Implementing** → main thread writes code
-6. **Internal code reviews** → reviewer-sonnet + reviewer-opus (parallel, each covers code + security + tests)
-7. **Codex code review** → final code approval
-8. **Complete** → commit changes manually
 
 ### Check Status
 
@@ -316,30 +202,18 @@ The orchestrator will show the current state and next action. The main thread ha
 
 ### Dry Run (Validation)
 
-Validate your pipeline setup without running it:
-
 ```bash
-# Basic validation (JSON syntax, scripts, docs, CLI tools)
 ./scripts/orchestrator.sh dry-run
-
-# Strict config validation (all required keys present)
-./scripts/validate-config.sh
 ```
 
-**dry-run** checks:
+**Checks**:
 - `.task/` directory and state file validity
 - `pipeline.config.json` valid JSON syntax
-- Required scripts present and executable (8 scripts)
-- Required subagents in `.claude/agents/` (2 reviewer agents)
+- Required scripts present and executable (4 scripts)
+- Required skills in `.claude/skills/` (3 review skills)
 - Required docs (`standards.md`, `workflow.md`)
 - `.task` in `.gitignore`
 - CLI tools (`jq` required, `claude`/`codex` optional)
-- Global CLAUDE.md conflict detection (warns if setup not run)
-
-**validate-config.sh** checks:
-- All required top-level keys present
-- All required nested keys (autonomy, models, etc.)
-- Correct value types (numbers, booleans)
 
 ### Recovery
 
@@ -351,21 +225,6 @@ Validate your pipeline setup without running it:
 ./scripts/orchestrator.sh reset
 ```
 
-### Handling User Input Requests
-
-If Claude needs clarification, the pipeline pauses with `needs_user_input` state:
-
-```bash
-# Check what questions need answering
-cat .task/state.json | jq '.previous_state'  # See which phase
-cat .task/plan-refined.json | jq '.questions'  # Plan phase questions
-cat .task/impl-result.json | jq '.questions'   # Implementation questions
-
-# After providing answers, resume:
-./scripts/state-manager.sh set plan_refining plan-001  # or implementing task-001
-./scripts/orchestrator.sh
-```
-
 ## Configuration
 
 ### pipeline.config.json
@@ -373,14 +232,10 @@ cat .task/impl-result.json | jq '.questions'   # Implementation questions
 | Setting                             | Description                                   | Default           |
 | ----------------------------------- | --------------------------------------------- | ----------------- |
 | `autonomy.mode`                     | `autonomous`, `semi-autonomous`, `supervised` | `semi-autonomous` |
-| `autonomy.reviewLoopLimit`          | Max review iterations (legacy, fallback)      | `10`              |
 | `autonomy.planReviewLoopLimit`      | Max plan review iterations                    | `10`              |
 | `autonomy.codeReviewLoopLimit`      | Max code review iterations                    | `15`              |
 | `errorHandling.autoResolveAttempts` | Retries before pausing                        | `3`               |
-| `models.orchestrator.model`         | Claude orchestrator model                     | `claude-opus-4.5` |
-| `models.coder.model`                | Claude coder model                            | `claude-opus-4.5` |
 | `models.reviewer.model`             | Codex reviewer model                          | `gpt-5.2-codex`   |
-| `debate.enabled`                    | Debate mechanism (disabled)                   | `false`           |
 
 ### Local Config Overrides
 
@@ -394,16 +249,6 @@ Create `pipeline.config.local.json` to override settings without modifying the t
   }
 }
 ```
-
-This file is gitignored and will be merged on top of `pipeline.config.json`.
-
-### Autonomy Modes
-
-| Mode              | Planning | Implementation | Review | Commit     |
-| ----------------- | -------- | -------------- | ------ | ---------- |
-| `autonomous`      | Auto     | Auto           | Auto   | Auto       |
-| `semi-autonomous` | Auto     | Auto           | Auto   | **Manual** |
-| `supervised`      | Manual   | Manual         | Manual | Manual     |
 
 ## Customization
 
@@ -429,22 +274,6 @@ Edit `docs/standards.md`:
 - Database queries use parameterized statements
 ```
 
-### Modifying Review Schema
-
-Edit `docs/schemas/review-result.schema.json` to add custom checklist items:
-
-```json
-{
-  "checklist": {
-    "properties": {
-      "security": { "enum": ["PASS", "WARN", "FAIL"] },
-      "performance": { "enum": ["PASS", "WARN", "FAIL"] },
-      "your_custom_check": { "enum": ["PASS", "WARN", "FAIL"] }
-    }
-  }
-}
-```
-
 ## Troubleshooting
 
 ### Pipeline stuck in error state
@@ -454,21 +283,12 @@ Edit `docs/schemas/review-result.schema.json` to add custom checklist items:
 # Select option 1 to reset to idle
 ```
 
-### Claude not creating output file
+### Skills not being detected
 
-Check that Claude has the right permissions:
-
-```bash
-# Verify CLAUDE.md instructions mention the output file
-grep "impl-result.json" CLAUDE.md
-```
-
-### Codex review failing
-
-Verify the schema is valid:
+Copy skills to personal directory for hot-reload:
 
 ```bash
-jq empty docs/schemas/review-result.schema.json
+cp -r .claude/skills/* ~/.claude/skills/
 ```
 
 ### View error logs

@@ -2,28 +2,39 @@
 
 ## Architecture Overview
 
-This pipeline uses a **main-thread-first architecture**:
+This pipeline uses a **skill-based sequential architecture**:
 
 - **Main Claude Code thread** = Does planning, research, and implementation directly
-- **Reviewer Subagents** = Internal reviews only (parallel, isolated)
-- **Codex** = Final review checkpoints only (end of planning, end of implementation)
+- **Reviewer Skills** = Sequential reviews with forked context isolation
+- **Codex** = Final review via skill (invokes Codex CLI)
 
-### Subagents
+### Reviewer Skills
 
-Located in `.claude/agents/`:
+Located in `.claude/skills/`:
 
-| Subagent | Purpose | Model |
-|----------|---------|-------|
-| `reviewer-sonnet` | Fast review (code + security + tests) | sonnet |
-| `reviewer-opus` | Deep review (code + security + tests) | opus |
+| Skill | Purpose | Model |
+|-------|---------|-------|
+| `review-sonnet` | Fast review (code + security + tests) | sonnet |
+| `review-opus` | Deep review (architecture + subtle bugs) | opus |
+| `review-codex` | Final review via Codex CLI | codex |
 
-> **Why only reviewers?** Planning, research, and implementation run in the main thread to preserve full context. Only reviewers run as subagents to keep review feedback isolated and enable parallel execution.
+> **Why sequential?** Each model reviews only ONCE per cycle, providing progressive refinement (fast → deep → final) without re-reviewing the same content.
 
-> **Dual Review Model**: Internal reviewers run in parallel with both sonnet and opus to get different perspectives. Both must approve before proceeding.
+> **Context isolation**: Skills run with `context: fork` to isolate review feedback and preserve token efficiency.
 
 ---
 
-## Starting a New Task
+## Quick Start with `/multi-ai`
+
+The easiest way to use this pipeline:
+
+```
+/multi-ai Add user authentication with JWT tokens
+```
+
+This command handles the entire workflow automatically.
+
+### Manual Start
 
 1. Create `.task/user-request.txt` with your request
 2. Set state: `./scripts/state-manager.sh set plan_drafting ""`
@@ -40,37 +51,41 @@ plan_drafting
      ↓ (main thread creates initial plan)
 plan_refining
      ↓ (main thread researches and refines)
-     ↓ (reviewer-sonnet + reviewer-opus internal review)
-     ↓ [loop until internally approved]
-plan_reviewing
-     ↓ (Codex final review)
-     ↓ [approved] → implementing
-     ↓ [needs_changes] → back to plan_refining
+     ↓ Sequential reviews:
+     │   1. /review-sonnet → fix issues
+     │   2. /review-opus → fix issues
+     │   3. /review-codex → fix issues (restart from step 1 if needed)
+     ↓ [all approved]
+implementing
 ```
 
 **Flow:**
 1. Main thread → Creates initial plan from user request
 2. Main thread → Researches codebase and refines plan with technical details
-3. `reviewer-sonnet` + `reviewer-opus` → Internal review (loops until solid)
-4. **Codex** → Final plan review (only Codex call in planning phase)
+3. **Sequential Reviews**:
+   - `/review-sonnet` → Fast scan, if issues: fix, continue
+   - `/review-opus` → Deep analysis, if issues: fix, continue
+   - `/review-codex` → Final review, if issues: fix, restart from sonnet
 
 ### Phase 2: Implementation
 
 ```
 implementing
      ↓ (main thread writes code)
-     ↓ (reviewer-sonnet + reviewer-opus internal reviews)
-     ↓ [loop until internally approved]
-reviewing
-     ↓ (Codex final review)
-     ↓ [approved] → complete
-     ↓ [needs_changes] → fixing → reviewing
+     ↓ Sequential reviews:
+     │   1. /review-sonnet → fix issues
+     │   2. /review-opus → fix issues
+     │   3. /review-codex → fix issues (restart from step 1 if needed)
+     ↓ [all approved]
+complete
 ```
 
 **Flow:**
 1. Main thread → Writes code following standards
-2. `reviewer-sonnet` + `reviewer-opus` → Internal review (code + security + tests)
-3. **Codex** → Final code review (only Codex call in implementation phase)
+2. **Sequential Reviews**:
+   - `/review-sonnet` → Code quality + security + tests
+   - `/review-opus` → Architecture + subtle bugs + test quality
+   - `/review-codex` → Final approval via Codex CLI
 
 ---
 
@@ -84,16 +99,25 @@ The orchestrator shows the current state and what action to take next:
 
 Example output:
 ```
-[INFO] Current state: plan_drafting
+[INFO] Current state: plan_refining
 
-ACTION: Create initial plan (main thread)
+ACTION: Refine plan with technical details (main thread)
 
-Task: Create initial plan from user request
-Input: .task/user-request.txt
-Output: .task/plan.json
+Task: Research codebase and refine plan
+Input: .task/plan.json
+Output: .task/plan-refined.json
 
-After completion, transition state:
-  ./scripts/state-manager.sh set plan_refining "$(jq -r .id .task/plan.json)"
+After completion, run SEQUENTIAL reviews (each model reviews once):
+  1. Invoke /review-sonnet → .task/review-sonnet.json
+     If needs_changes: fix issues, then continue to step 2
+  2. Invoke /review-opus → .task/review-opus.json
+     If needs_changes: fix issues, then continue to step 3
+  3. Invoke /review-codex → .task/review-codex.json
+     If needs_changes: fix issues, restart from step 1
+     If approved: transition to implementing
+
+When all reviews pass:
+  ./scripts/state-manager.sh set implementing "$(jq -r .id .task/plan-refined.json)"
 ```
 
 ### Commands
@@ -115,14 +139,13 @@ After completion, transition state:
 |-------|-------------|
 | `idle` | No active task |
 | `plan_drafting` | Creating initial plan |
-| `plan_refining` | Refining plan with technical details |
-| `plan_reviewing` | Codex final plan review |
-| `implementing` | Writing code |
-| `reviewing` | Codex final code review |
-| `fixing` | Fixing issues from code review |
+| `plan_refining` | Refining plan + sequential skill reviews |
+| `implementing` | Writing code + sequential skill reviews |
 | `complete` | Task finished |
 | `error` | Pipeline error |
 | `needs_user_input` | Waiting for user clarification |
+
+> **Note**: States `plan_reviewing`, `reviewing`, and `fixing` are deprecated. Reviews now happen within `plan_refining` and `implementing` states using sequential skill invocation.
 
 ### Full Flow
 
@@ -131,18 +154,14 @@ idle
   ↓
 plan_drafting (main thread creates plan)
   ↓
-plan_refining (main thread refines + reviewer internal loop)
-  ↓
-plan_reviewing (Codex final review) ←──────────────────┐
-  ↓                                                    │
-  [needs_changes] → back to plan_refining ─────────────┘
-  ↓ [approved]
-implementing (main thread implements + reviewer internal loop)
-  ↓
-reviewing (Codex final review) ←───────────────────────┐
-  ↓                                                    │
-  [needs_changes] → fixing → back to reviewing ────────┘
-  ↓ [approved]
+plan_refining (main thread refines + sequential skill reviews)
+  │   sonnet → fix → opus → fix → codex
+  │          ↑__________________________|  (restart if codex finds issues)
+  ↓ [all approved]
+implementing (main thread implements + sequential skill reviews)
+  │   sonnet → fix → opus → fix → codex
+  │          ↑__________________________|  (restart if codex finds issues)
+  ↓ [all approved]
 complete
 ```
 
@@ -152,18 +171,10 @@ complete
 |------|----|---------|
 | `idle` | `plan_drafting` | User sets state with user-request.txt |
 | `plan_drafting` | `plan_refining` | Main thread creates initial plan |
-| `plan_refining` | `plan_reviewing` | Both reviewers approve (sonnet + opus) |
-| `plan_reviewing` | `plan_refining` | Codex requests changes |
-| `plan_reviewing` | `implementing` | Codex approves → Claude Code runs plan-to-task.sh |
-| `implementing` | `reviewing` | Both internal reviewers approve (sonnet + opus) |
-| `reviewing` | `complete` | Codex approves |
-| `reviewing` | `fixing` | Codex requests changes |
-| `reviewing` | `error` | Codex rejects (fundamentally flawed) |
-| `fixing` | `reviewing` | Main thread fixes issues |
+| `plan_refining` | `implementing` | All reviewers approve (sonnet → opus → codex) |
+| `implementing` | `complete` | All reviewers approve (sonnet → opus → codex) |
 | `*` | `error` | Failure after retries |
 | `*` | `needs_user_input` | Main thread needs clarification |
-
-> **Note**: `rejected` status means the task is fundamentally flawed and cannot be fixed with minor changes. Use `./scripts/recover.sh` to restart with a new approach.
 
 ---
 
@@ -199,46 +210,35 @@ complete
 }
 ```
 
-### Internal review outputs (dual-model)
+### Review outputs (sequential)
 
-Each reviewer covers code quality, security, and test coverage:
+Each skill outputs to its own file:
 
-| File | Reviewer |
-|------|----------|
-| `.task/internal-review-sonnet.json` | reviewer-sonnet |
-| `.task/internal-review-opus.json` | reviewer-opus |
-
-> **Both phases**: 2 reviewers must approve (sonnet + opus) before proceeding to Codex final review.
+| File | Skill | Model |
+|------|-------|-------|
+| `.task/review-sonnet.json` | /review-sonnet | sonnet |
+| `.task/review-opus.json` | /review-opus | opus |
+| `.task/review-codex.json` | /review-codex | codex |
 
 Format:
 ```json
 {
   "status": "approved|needs_changes",
-  "reviewer": "reviewer-sonnet",
+  "review_type": "plan|code",
+  "reviewer": "review-sonnet",
   "model": "sonnet",
   "reviewed_at": "ISO8601",
   "summary": "Review summary",
-  "code_issues": [...],
-  "security_issues": [...],
-  "test_issues": [...]
-}
-```
-
-### plan-review.json (Codex final plan review)
-```json
-{
-  "status": "approved|needs_changes",
-  "summary": "Overall assessment",
-  "concerns": [
+  "issues": [
     {
       "severity": "error|warning|suggestion",
-      "area": "requirements|approach|complexity|risks|feasibility",
-      "message": "Description of concern",
-      "suggestion": "How to address"
+      "category": "code|security|test|plan",
+      "file": "path/to/file.ts",
+      "line": 42,
+      "message": "Issue description",
+      "suggestion": "How to fix"
     }
-  ],
-  "reviewed_by": "codex",
-  "reviewed_at": "ISO8601"
+  ]
 }
 ```
 
@@ -252,10 +252,6 @@ Format:
   "questions": []
 }
 ```
-
-### review-result.json (Codex final code review)
-Schema enforced via --output-schema.
-See docs/schemas/review-result.schema.json
 
 ---
 
@@ -279,7 +275,6 @@ rm .task/.orchestrator.lock
 Validate setup before running:
 
 ```bash
-./scripts/validate-config.sh  # Strict config validation
 ./scripts/orchestrator.sh dry-run
 ```
 
@@ -287,8 +282,8 @@ Checks:
 - `.task/` directory exists
 - `state.json` valid (or will be created)
 - `pipeline.config.json` valid
-- Required scripts executable
-- Required subagents exist
+- Required scripts executable (4 scripts)
+- Required skills exist (3 review skills)
 - Required docs exist
 - `.task` in `.gitignore`
 - CLI tools available
@@ -298,8 +293,8 @@ Checks:
 The recovery tool respects which phase failed:
 
 - Errors in `plan_drafting` → retry from `plan_drafting`
-- Errors in `plan_refining`/`plan_reviewing` → retry from `plan_refining`
-- Errors in `implementing`/`reviewing`/`fixing` → retry from `implementing`
+- Errors in `plan_refining` → retry from `plan_refining`
+- Errors in `implementing` → retry from `implementing`
 
 ```bash
 # Interactive recovery
@@ -316,8 +311,8 @@ Create `pipeline.config.local.json` for local overrides (gitignored):
 ```json
 {
   "autonomy": {
-    "planReviewLoopLimit": 15,
-    "codeReviewLoopLimit": 20
+    "planReviewLoopLimit": 5,
+    "codeReviewLoopLimit": 10
   }
 }
 ```
@@ -326,46 +321,18 @@ Create `pipeline.config.local.json` for local overrides (gitignored):
 
 ## Codex Session Resume
 
-Codex reviews use `resume --last` for subsequent reviews to save tokens, with an updated prompt that includes changes since last review.
+Codex reviews use `resume --last` for subsequent reviews to save tokens.
 
 ### How It Works
 
-- **First review** (new task): Full prompt with all context (standards, workflow, etc.)
-- **Subsequent reviews**: Uses `resume --last` + shorter prompt with changes summary
+- **First review** (new task): Full prompt with all context
+- **Subsequent reviews**: Uses `resume --last` + changes summary
 
 ### Session Tracking
 
 Uses `.task/.codex-session-active` marker file:
 - Created after first successful Codex call
-- Cleared when entering `plan_drafting` (new task), after plan approval (plan-to-task.sh), or via reset
-
-This ensures:
-- Plan reviews: first is fresh, subsequent use resume
-- Code reviews: first is fresh (marker cleared after plan approved), subsequent use resume
-
-### Plan Reviews (Subsequent)
-
-```
-## IMPORTANT: This is a follow-up review
-
-The plan has been UPDATED based on your previous feedback.
-Please re-read and re-review the refined plan below.
-
-[Updated plan content]
-```
-
-### Code Reviews (Subsequent)
-
-```
-## IMPORTANT: This is a follow-up review
-
-The implementation has been UPDATED based on your previous feedback.
-
-### Files Changed Since Last Review:
-[List of changed files from git diff or impl-result.json]
-
-Please re-review focusing on the changed files.
-```
+- Cleared on pipeline reset or new task
 
 ---
 

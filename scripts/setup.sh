@@ -335,7 +335,6 @@ main() {
   echo -e "${BOLD}Next steps:${NC}"
   echo "  1. Run: ./scripts/state-manager.sh init"
   echo "  2. Run: ./scripts/orchestrator.sh dry-run"
-  echo "  3. Run: ./scripts/validate-config.sh"
   echo ""
 }
 

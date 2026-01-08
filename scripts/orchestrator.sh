@@ -170,12 +170,8 @@ run_dry_run() {
   # 4. Check required scripts
   local required_scripts=(
     "state-manager.sh"
-    "run-codex-review.sh"
-    "run-codex-plan-review.sh"
-    "plan-to-task.sh"
     "orchestrator.sh"
     "recover.sh"
-    "validate-config.sh"
     "setup.sh"
   )
   local scripts_ok=1
@@ -192,24 +188,25 @@ run_dry_run() {
   done
   [[ $scripts_ok -eq 1 ]] && echo "Scripts: OK (${#required_scripts[@]} scripts)"
 
-  # 5. Check subagents
-  local subagents_dir="$PROJECT_ROOT/.claude/agents"
-  local required_agents=(
-    "reviewer-sonnet.md"
-    "reviewer-opus.md"
+  # 5. Check review skills
+  local skills_dir="$PROJECT_ROOT/.claude/skills"
+  local required_skills=(
+    "review-sonnet/SKILL.md"
+    "review-opus/SKILL.md"
+    "review-codex/SKILL.md"
   )
-  local agents_ok=1
-  if [[ -d "$subagents_dir" ]]; then
-    for agent in "${required_agents[@]}"; do
-      if [[ ! -f "$subagents_dir/$agent" ]]; then
-        echo "Subagent missing: $agent"
-        agents_ok=0
+  local skills_ok=1
+  if [[ -d "$skills_dir" ]]; then
+    for skill in "${required_skills[@]}"; do
+      if [[ ! -f "$skills_dir/$skill" ]]; then
+        echo "Skill missing: $skill"
+        skills_ok=0
         ((errors++)) || true
       fi
     done
-    [[ $agents_ok -eq 1 ]] && echo "Subagents: OK (${#required_agents[@]} agents)"
+    [[ $skills_ok -eq 1 ]] && echo "Skills: OK (${#required_skills[@]} skills)"
   else
-    echo "Subagents directory: MISSING (.claude/agents/)"
+    echo "Skills directory: MISSING (.claude/skills/)"
     ((errors++)) || true
   fi
 
@@ -319,80 +316,76 @@ show_next_action() {
       echo ""
       echo "Task: Research codebase and refine plan"
       echo "Input: .task/plan.json"
-      if [[ -f .task/plan-review.json ]]; then
-        echo "Feedback: .task/plan-review.json (address all concerns)"
+      if [[ -f .task/review-codex.json ]]; then
+        echo "Feedback: .task/review-codex.json (address all concerns - restart cycle)"
+      elif [[ -f .task/review-opus.json ]]; then
+        echo "Feedback: .task/review-opus.json (address concerns)"
+      elif [[ -f .task/review-sonnet.json ]]; then
+        echo "Feedback: .task/review-sonnet.json (address concerns)"
       fi
       echo "Output: .task/plan-refined.json"
       echo ""
-      echo "After completion, run internal reviews IN PARALLEL:"
-      echo "  1. Invoke 'reviewer-sonnet' → .task/internal-review-sonnet.json"
-      echo "  2. Invoke 'reviewer-opus' → .task/internal-review-opus.json"
+      echo "After completion, run SEQUENTIAL reviews (each model reviews once):"
+      echo "  1. Invoke /review-sonnet → .task/review-sonnet.json"
+      echo "     If needs_changes: fix issues, then continue to step 2"
+      echo "  2. Invoke /review-opus → .task/review-opus.json"
+      echo "     If needs_changes: fix issues, then continue to step 3"
+      echo "  3. Invoke /review-codex → .task/review-codex.json"
+      echo "     If needs_changes: fix issues, restart from step 1"
+      echo "     If approved: transition to implementing"
       echo ""
-      echo "If BOTH internal reviews approve, transition to Codex final review:"
-      echo "  ./scripts/state-manager.sh set plan_reviewing \"\$(jq -r .id .task/plan-refined.json)\""
+      echo "When all reviews pass:"
+      echo "  ./scripts/state-manager.sh set implementing \"\$(jq -r .id .task/plan-refined.json)\""
       ;;
     plan_reviewing)
-      echo "ACTION: Run Codex final plan review"
+      echo "NOTE: This state is deprecated. Reviews now happen within plan_refining."
       echo ""
-      if [[ -f .task/.codex-session-active ]]; then
-        echo "Command: ./scripts/run-codex-plan-review.sh \"<message describing what changed>\""
-        echo "         (Message REQUIRED for subsequent reviews)"
-      else
-        echo "Command: ./scripts/run-codex-plan-review.sh"
-      fi
-      echo "Output: .task/plan-review.json"
-      echo ""
-      echo "After Codex review:"
-      echo "  - If approved: ./scripts/plan-to-task.sh (auto-converts to task)"
-      echo "  - If needs_changes: ./scripts/state-manager.sh set plan_refining <plan_id>"
+      echo "Use the sequential skill-based review flow in plan_refining state."
+      echo "To return to plan_refining:"
+      echo "  ./scripts/state-manager.sh set plan_refining \"\$(jq -r .id .task/plan-refined.json)\""
       ;;
     implementing)
       echo "ACTION: Implement the approved plan (main thread)"
       echo ""
       echo "Task: Implement the approved plan"
-      echo "Input: .task/current-task.json"
+      echo "Input: .task/plan-refined.json"
       echo "Standards: docs/standards.md"
-      if [[ -f .task/review-result.json ]]; then
-        echo "Feedback: .task/review-result.json (fix all issues)"
+      if [[ -f .task/review-codex.json ]]; then
+        echo "Feedback: .task/review-codex.json (address all concerns - restart cycle)"
+      elif [[ -f .task/review-opus.json ]]; then
+        echo "Feedback: .task/review-opus.json (address concerns)"
+      elif [[ -f .task/review-sonnet.json ]]; then
+        echo "Feedback: .task/review-sonnet.json (address concerns)"
       fi
       echo "Output: .task/impl-result.json"
       echo ""
-      echo "After implementation, run internal reviews IN PARALLEL:"
-      echo "  1. Invoke 'reviewer-sonnet' → .task/internal-review-sonnet.json"
-      echo "  2. Invoke 'reviewer-opus' → .task/internal-review-opus.json"
+      echo "After implementation, run SEQUENTIAL reviews (each model reviews once):"
+      echo "  1. Invoke /review-sonnet → .task/review-sonnet.json"
+      echo "     If needs_changes: fix issues, then continue to step 2"
+      echo "  2. Invoke /review-opus → .task/review-opus.json"
+      echo "     If needs_changes: fix issues, then continue to step 3"
+      echo "  3. Invoke /review-codex → .task/review-codex.json"
+      echo "     If needs_changes: fix issues, restart from step 1"
+      echo "     If approved: transition to complete"
       echo ""
-      echo "Each reviewer covers code quality, security, and test coverage."
-      echo ""
-      echo "If BOTH internal reviews approve, transition to Codex final review:"
-      echo "  ./scripts/state-manager.sh set reviewing \"\$(jq -r .id .task/current-task.json)\""
+      echo "When all reviews pass:"
+      echo "  ./scripts/state-manager.sh set complete \"\$(jq -r .id .task/plan-refined.json)\""
       ;;
     reviewing)
-      echo "ACTION: Run Codex final code review"
+      echo "NOTE: This state is deprecated. Reviews now happen within implementing."
       echo ""
-      if [[ -f .task/.codex-session-active ]]; then
-        echo "Command: ./scripts/run-codex-review.sh \"<message describing what changed>\""
-        echo "         (Message REQUIRED for subsequent reviews)"
-      else
-        echo "Command: ./scripts/run-codex-review.sh"
-      fi
-      echo "Output: .task/review-result.json"
-      echo ""
-      echo "After Codex review:"
-      echo "  - If approved: ./scripts/state-manager.sh set complete <task_id>"
-      echo "  - If needs_changes: ./scripts/state-manager.sh set fixing <task_id>"
-      echo "  - If rejected: ./scripts/state-manager.sh set error <task_id>"
-      echo "    (Task is fundamentally flawed; use ./scripts/recover.sh to restart)"
+      echo "Use the sequential skill-based review flow in implementing state."
+      echo "To return to implementing:"
+      echo "  ./scripts/state-manager.sh set implementing \"\$(jq -r .id .task/plan-refined.json)\""
       ;;
     fixing)
-      echo "ACTION: Fix issues from Codex review (main thread)"
+      echo "NOTE: This state is deprecated. Fixes now happen within implementing."
       echo ""
-      echo "Task: Fix issues from Codex review"
-      echo "Input: .task/current-task.json"
-      echo "Feedback: .task/review-result.json"
-      echo "Output: .task/impl-result.json (updated)"
+      echo "The sequential review flow handles fixes inline:"
+      echo "  sonnet → fix → opus → fix → codex → fix (restart from sonnet)"
       echo ""
-      echo "After fixes, run internal reviews again, then:"
-      echo "  ./scripts/state-manager.sh set reviewing <task_id>"
+      echo "To return to implementing:"
+      echo "  ./scripts/state-manager.sh set implementing \"\$(jq -r .id .task/plan-refined.json)\""
       ;;
     complete)
       log_success "Task completed successfully!"
@@ -452,6 +445,7 @@ case "${1:-run}" in
     rm -f .task/plan.json .task/plan-refined.json .task/plan-review.json
     rm -f .task/current-task.json .task/user-request.txt
     rm -f .task/internal-review-sonnet.json .task/internal-review-opus.json
+    rm -f .task/review-sonnet.json .task/review-opus.json .task/review-codex.json
     rm -f .task/.codex-session-active  # Clear Codex session marker
     log_success "Pipeline reset to idle"
     ;;

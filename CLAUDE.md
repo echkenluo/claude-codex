@@ -1,6 +1,6 @@
 # Claude Code - Multi-AI Pipeline Project
 
-> **IMPORTANT**: This project uses an orchestrated workflow where the main Claude Code thread handles planning, research, and implementation directly. Only internal reviewers run as separate subagents. Codex is called at key checkpoints for final reviews.
+> **IMPORTANT**: This project uses a skill-based sequential review workflow. The main Claude Code thread handles planning and implementation. Reviews use forked skills (sonnet → opus → codex) that run in isolated contexts.
 
 ## Architecture Overview
 
@@ -14,13 +14,10 @@ Main Claude Code Thread (Does the Work)
   ├── Implementation (main thread)
   │     └── Writes code following approved plan
   │
-  ├── Reviewer Subagents (parallel, isolated):
-  │     ├── reviewer-sonnet → Fast review (code + security + tests)
-  │     └── reviewer-opus   → Deep review (code + security + tests)
-  │
-  └── Codex (final reviews only):
-        ├── End of planning phase
-        └── End of implementation phase
+  └── Review Skills (sequential, forked context):
+        ├── /review-sonnet → Fast review (sonnet model)
+        ├── /review-opus   → Deep review (opus model)
+        └── /review-codex  → Final review (codex)
 ```
 
 ---
@@ -30,7 +27,7 @@ Main Claude Code Thread (Does the Work)
 Guide users to use the orchestrator workflow:
 
 ```
-This project uses an orchestrated workflow (main thread + reviewer subagents + Codex reviews).
+This project uses a skill-based review workflow.
 
 To implement your request:
 
@@ -43,11 +40,9 @@ To implement your request:
 
 The pipeline will:
 - Create and refine a plan (main thread)
-- Run internal reviews (reviewer-sonnet + reviewer-opus subagents)
-- Final plan review (Codex)
+- Sequential reviews: /review-sonnet → /review-opus → /review-codex
 - Implement the code (main thread)
-- Run internal reviews (reviewer-sonnet + reviewer-opus subagents)
-- Final code review (Codex)
+- Sequential reviews: /review-sonnet → /review-opus → /review-codex
 
 For status: ./scripts/orchestrator.sh status
 For recovery: ./scripts/recover.sh
@@ -55,77 +50,72 @@ For recovery: ./scripts/recover.sh
 
 ---
 
-## How the Orchestrator Works
+## Review Skills
 
-The orchestrator displays the current state and what action to take:
+Located in `.claude/skills/`:
 
-```bash
-$ ./scripts/orchestrator.sh
-[INFO] Current state: plan_drafting
+| Skill | Purpose | Model |
+|-------|---------|-------|
+| `/review-sonnet` | Fast review (code + security + tests) | sonnet |
+| `/review-opus` | Deep review (architecture + subtle issues) | opus |
+| `/review-codex` | Final review via Codex CLI | codex |
 
-ACTION: Create initial plan (main thread)
+### Sequential Review Flow
 
-Task: Create initial plan from user request
-Input: .task/user-request.txt
-Output: .task/plan.json
+Reviews run **sequentially** - each model reviews only ONCE per cycle:
 
-After completion, transition state:
-  ./scripts/state-manager.sh set plan_refining "$(jq -r .id .task/plan.json)"
+```
+sonnet → fix (if needed) → opus → fix (if needed) → codex → fix (restart from sonnet if needed)
 ```
 
-### Workflow Steps
+**Key benefits**:
+- Each model provides unique perspective without re-reviewing
+- Progressive refinement (fast → deep → final)
+- Token-efficient (forked context isolation)
 
-1. **Read the ACTION** - See what work needs to be done
-2. **Do the work** - Main thread handles planning/implementation; use Task tool for reviewers
-3. **Write output file** - Write to the specified output location
-4. **Transition state** - Run the shown state-manager command
-5. **Run orchestrator again** - See the next action
+### Invoking Review Skills
+
+Simply invoke the skill by name:
+
+```
+/review-sonnet
+/review-opus
+/review-codex
+```
+
+Skills auto-detect whether to review plan or code based on:
+- Plan review: `.task/plan-refined.json` exists, no `.task/impl-result.json`
+- Code review: `.task/impl-result.json` exists
+
+### Review Outputs
+
+| File | Skill |
+|------|-------|
+| `.task/review-sonnet.json` | /review-sonnet |
+| `.task/review-opus.json` | /review-opus |
+| `.task/review-codex.json` | /review-codex |
 
 ---
 
-## Subagents
-
-Located in `.claude/agents/`:
-
-| Subagent | Purpose | Model |
-|----------|---------|-------|
-| `reviewer-sonnet` | Fast review (code + security + tests) | sonnet |
-| `reviewer-opus` | Deep review (code + security + tests) | opus |
-
-> **Why only reviewers?** Planning, research, and implementation run in the main thread to preserve full context. Only reviewers run as subagents to keep review feedback isolated and enable parallel execution.
-
-> **Dual Review Model**: Internal reviewers run in parallel with both sonnet and opus models to get different perspectives. Both must approve before proceeding to Codex.
-
-### Invoking Reviewer Subagents
-
-Use the Task tool to invoke reviewers:
-
-```
-Task: reviewer-sonnet
-Prompt: "Review the implementation in .task/impl-result.json. Output to .task/internal-review-sonnet.json"
-```
-
----
-
-## State Machine
+## State Machine (Simplified)
 
 ```
 idle
   ↓
 plan_drafting (main thread creates plan)
   ↓
-plan_refining (main thread refines + reviewer subagents)
-  ↓
-plan_reviewing (Codex final review) ←──────────────────┐
-  ↓                                                    │
-  [needs_changes] → back to plan_refining ─────────────┘
-  ↓ [approved]
-implementing (main thread implements + reviewer subagents)
-  ↓
-reviewing (Codex final review) ←───────────────────────┐
-  ↓                                                    │
-  [needs_changes] → fixing → back to reviewing ────────┘
-  ↓ [approved]
+plan_refining (main thread refines + sequential skill reviews)
+  │
+  │  Review cycle: sonnet → opus → codex
+  │  If codex needs_changes: restart from sonnet
+  │
+  ↓ [all approved]
+implementing (main thread implements + sequential skill reviews)
+  │
+  │  Review cycle: sonnet → opus → codex
+  │  If codex needs_changes: restart from sonnet
+  │
+  ↓ [all approved]
 complete
 ```
 
@@ -191,47 +181,40 @@ Write to: `.task/impl-result.json`
 }
 ```
 
-### Internal Review Outputs (Dual-Model)
-
-| File | Reviewer |
-|------|----------|
-| `.task/internal-review-sonnet.json` | reviewer-sonnet |
-| `.task/internal-review-opus.json` | reviewer-opus |
-
 ---
 
 ## Review Handling
 
-### Internal Reviews (Subagents)
+### Sequential Review Process
 
-**Both planning and implementation phases**:
-- Run 2 reviewers in parallel: reviewer-sonnet + reviewer-opus
-- Each reviewer covers code quality, security, and test coverage
-- Both must approve before proceeding to Codex
+For both planning and implementation phases:
 
-If any reviewer returns `needs_changes`, fix and re-review.
+1. **Invoke /review-sonnet**
+   - If `needs_changes`: fix issues, continue to step 2
+   - If `approved`: continue to step 2
 
-### Codex Final Reviews
+2. **Invoke /review-opus**
+   - If `needs_changes`: fix issues, continue to step 3
+   - If `approved`: continue to step 3
 
-Codex is called at two checkpoints:
-1. **End of planning** → `./scripts/run-codex-plan-review.sh`
-2. **End of implementation** → `./scripts/run-codex-review.sh`
+3. **Invoke /review-codex**
+   - If `needs_changes`: fix issues, **restart from step 1**
+   - If `approved`: proceed to next phase
 
-If Codex requests changes:
-- Return to previous phase (plan_refining or fixing)
-- Address ALL concerns
-- Re-run internal reviews
-- Submit for Codex review again
+### Why Sequential?
+
+- Skills run in forked context (token-efficient)
+- Each model reviews ONCE per cycle (no redundant re-reviews)
+- Progressive refinement catches issues at appropriate depth
 
 ---
 
 ## Strict Loop-Until-Pass Model
 
-- Reviews loop until approved
+- Reviews loop until all three approve
 - No debate mechanism - accept all review feedback
 - Fix ALL issues raised by any reviewer
-
-> **Note**: Loop limits (planReviewLoopLimit: 10, codeReviewLoopLimit: 15) are defined in `pipeline.config.json` for reference. The main Claude thread should track iterations and enforce limits manually.
+- Codex rejection restarts the full review cycle
 
 ---
 
