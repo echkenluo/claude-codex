@@ -1,6 +1,6 @@
 {
   "name": "claude-codex",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Multi-AI orchestration pipeline with sequential review workflow (sonnet → opus → codex)",
   "author": {
     "name": "Z-M-Huang",
@@ -9,6 +9,14 @@
   "homepage": "https://github.com/Z-M-Huang/claude-codex",
   "repository": "https://github.com/Z-M-Huang/claude-codex",
   "license": "MIT",
-  "keywords": ["multi-ai", "code-review", "orchestration", "pipeline", "sonnet", "opus", "codex"],
+  "keywords": [
+    "multi-ai",
+    "code-review",
+    "orchestration",
+    "pipeline",
+    "sonnet",
+    "opus",
+    "codex"
+  ],
   "skills": "./skills/"
 }
