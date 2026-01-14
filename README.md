@@ -128,7 +128,7 @@ claude-codex/
 
 - [Claude Code](https://claude.ai/code) installed and authenticated
 - [Codex CLI](https://github.com/openai/codex) installed and authenticated (for review-codex skill)
-- `jq` for JSON processing
+- [Bun](https://bun.sh/) installed (required by Claude Code, used for JSON processing)
 
 ## Configuration
 
@@ -169,7 +169,7 @@ Example plugin.json:
 ```json
 {
   "name": "your-plugin-name",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "What your plugin does",
   "author": { "name": "Your Name" },
   "skills": "./skills/"

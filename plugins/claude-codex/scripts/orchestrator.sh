@@ -80,7 +80,7 @@ setup_traps() {
 # Get max retries from config
 get_max_retries() {
   if [[ -f "$PLUGIN_ROOT/pipeline.config.json" ]]; then
-    jq -r '.errorHandling.autoResolveAttempts // 3' "$PLUGIN_ROOT/pipeline.config.json"
+    $JSON_TOOL get "$PLUGIN_ROOT/pipeline.config.json" ".errorHandling.autoResolveAttempts // 3"
   else
     echo "3"
   fi
@@ -133,9 +133,9 @@ run_dry_run() {
 
   # 2. Check state.json
   if [[ -f "$TASK_DIR/state.json" ]]; then
-    if jq empty "$TASK_DIR/state.json" 2>/dev/null; then
+    if $JSON_TOOL valid "$TASK_DIR/state.json" 2>/dev/null; then
       local status
-      status=$(jq -r '.status // empty' "$TASK_DIR/state.json")
+      status=$($JSON_TOOL get "$TASK_DIR/state.json" ".status // empty")
       local valid_states="idle plan_drafting plan_refining plan_reviewing implementing reviewing fixing complete error needs_user_input"
       if [[ -n "$status" ]] && [[ " $valid_states " =~ " $status " ]]; then
         echo "State file: OK (status: $status)"
@@ -153,7 +153,7 @@ run_dry_run() {
 
   # 3. Check config file
   if [[ -f "$PLUGIN_ROOT/pipeline.config.json" ]]; then
-    if jq empty "$PLUGIN_ROOT/pipeline.config.json" 2>/dev/null; then
+    if $JSON_TOOL valid "$PLUGIN_ROOT/pipeline.config.json" 2>/dev/null; then
       echo "Config file: OK"
     else
       echo "Config file: INVALID JSON"
@@ -233,10 +233,10 @@ run_dry_run() {
   fi
 
   # 7. Check CLI tools
-  if command -v jq >/dev/null 2>&1; then
-    echo "CLI jq: OK"
+  if command -v bun >/dev/null 2>&1; then
+    echo "CLI bun: OK"
   else
-    echo "CLI jq: MISSING (required)"
+    echo "CLI bun: MISSING (required for JSON processing)"
     ((errors++)) || true
   fi
 
@@ -257,9 +257,11 @@ run_dry_run() {
   # 8. Check for global CLAUDE.md conflict
   local global_claude="$HOME/.claude/CLAUDE.md"
   if [[ -f "$global_claude" ]]; then
-    if [[ -f "$TASK_DIR/preferences.json" ]] && jq -e '.workflow_mode' "$TASK_DIR/preferences.json" >/dev/null 2>&1; then
+    local workflow_mode
+    workflow_mode=$($JSON_TOOL get "$TASK_DIR/preferences.json" ".workflow_mode // empty" 2>/dev/null)
+    if [[ -n "$workflow_mode" ]]; then
       local mode
-      mode=$(jq -r '.workflow_mode' "$TASK_DIR/preferences.json")
+      mode="$workflow_mode"
       echo "Global CLAUDE.md: DETECTED (configured: $mode mode)"
     else
       echo "Global CLAUDE.md: WARNING - detected but setup not run"
@@ -308,7 +310,7 @@ show_next_action() {
       echo "Output: $TASK_DIR/plan.json"
       echo ""
       echo "After completion, transition state:"
-      echo "  $PLUGIN_ROOT/scripts/state-manager.sh set plan_refining \"\$(jq -r .id $TASK_DIR/plan.json)\""
+      echo "  $PLUGIN_ROOT/scripts/state-manager.sh set plan_refining \"\$(bun $PLUGIN_ROOT/scripts/json-tool.ts get $TASK_DIR/plan.json .id)\""
       ;;
     plan_refining)
       echo "ACTION: Refine plan with technical details (main thread)"
@@ -334,14 +336,14 @@ show_next_action() {
       echo "     If approved: transition to implementing"
       echo ""
       echo "When all reviews pass:"
-      echo "  $PLUGIN_ROOT/scripts/state-manager.sh set implementing \"\$(jq -r .id $TASK_DIR/plan-refined.json)\""
+      echo "  $PLUGIN_ROOT/scripts/state-manager.sh set implementing \"\$(bun $PLUGIN_ROOT/scripts/json-tool.ts get $TASK_DIR/plan-refined.json .id)\""
       ;;
     plan_reviewing)
       echo "NOTE: This state is deprecated. Reviews now happen within plan_refining."
       echo ""
       echo "Use the sequential skill-based review flow in plan_refining state."
       echo "To return to plan_refining:"
-      echo "  $PLUGIN_ROOT/scripts/state-manager.sh set plan_refining \"\$(jq -r .id $TASK_DIR/plan-refined.json)\""
+      echo "  $PLUGIN_ROOT/scripts/state-manager.sh set plan_refining \"\$(bun $PLUGIN_ROOT/scripts/json-tool.ts get $TASK_DIR/plan-refined.json .id)\""
       ;;
     implementing)
       echo "ACTION: Invoke /implement-sonnet to implement the approved plan"
@@ -369,14 +371,14 @@ show_next_action() {
       echo "     If approved: transition to complete"
       echo ""
       echo "When all reviews pass:"
-      echo "  $PLUGIN_ROOT/scripts/state-manager.sh set complete \"\$(jq -r .id $TASK_DIR/plan-refined.json)\""
+      echo "  $PLUGIN_ROOT/scripts/state-manager.sh set complete \"\$(bun $PLUGIN_ROOT/scripts/json-tool.ts get $TASK_DIR/plan-refined.json .id)\""
       ;;
     reviewing)
       echo "NOTE: This state is deprecated. Reviews now happen within implementing."
       echo ""
       echo "Use the sequential skill-based review flow in implementing state."
       echo "To return to implementing:"
-      echo "  $PLUGIN_ROOT/scripts/state-manager.sh set implementing \"\$(jq -r .id $TASK_DIR/plan-refined.json)\""
+      echo "  $PLUGIN_ROOT/scripts/state-manager.sh set implementing \"\$(bun $PLUGIN_ROOT/scripts/json-tool.ts get $TASK_DIR/plan-refined.json .id)\""
       ;;
     fixing)
       echo "NOTE: This state is deprecated. Fixes now happen within implementing."
@@ -385,7 +387,7 @@ show_next_action() {
       echo "  sonnet → fix → opus → fix → codex → fix (restart from sonnet)"
       echo ""
       echo "To return to implementing:"
-      echo "  $PLUGIN_ROOT/scripts/state-manager.sh set implementing \"\$(jq -r .id $TASK_DIR/plan-refined.json)\""
+      echo "  $PLUGIN_ROOT/scripts/state-manager.sh set implementing \"\$(bun $PLUGIN_ROOT/scripts/json-tool.ts get $TASK_DIR/plan-refined.json .id)\""
       ;;
     complete)
       log_success "Task completed successfully!"

@@ -39,10 +39,13 @@ check_global_claude_md() {
   fi
 }
 
+# JSON tool path (cross-platform jq replacement)
+JSON_TOOL="bun $PLUGIN_ROOT/scripts/json-tool.ts"
+
 # Get existing preference
 get_existing_preference() {
   if [[ -f "$PREFERENCES_FILE" ]]; then
-    jq -r '.workflow_mode // empty' "$PREFERENCES_FILE" 2>/dev/null
+    $JSON_TOOL get "$PREFERENCES_FILE" ".workflow_mode // empty" 2>/dev/null
   fi
 }
 
@@ -52,8 +55,8 @@ save_preference() {
   mkdir -p "$TASK_DIR"
 
   if [[ -f "$PREFERENCES_FILE" ]]; then
-    jq --arg mode "$mode" '.workflow_mode = $mode | .configured_at = (now | todate)' \
-      "$PREFERENCES_FILE" > "$PREFERENCES_FILE.tmp"
+    cp "$PREFERENCES_FILE" "$PREFERENCES_FILE.tmp"
+    $JSON_TOOL set "$PREFERENCES_FILE.tmp" "workflow_mode=$mode" "configured_at@=now"
     mv "$PREFERENCES_FILE.tmp" "$PREFERENCES_FILE"
   else
     cat > "$PREFERENCES_FILE" << EOF
@@ -151,7 +154,7 @@ Input: .task/user-request.txt
 Output: .task/plan.json
 
 After completion, transition state:
-  "${CLAUDE_PLUGIN_ROOT}/scripts/state-manager.sh" set plan_refining "$(jq -r .id .task/plan.json)"
+  "${CLAUDE_PLUGIN_ROOT}/scripts/state-manager.sh" set plan_refining "$(bun ${CLAUDE_PLUGIN_ROOT}/scripts/json-tool.ts get .task/plan.json .id)"
 ```
 
 ### Workflow Steps

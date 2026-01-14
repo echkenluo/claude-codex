@@ -15,6 +15,9 @@ fi
 TASK_DIR="${CLAUDE_PROJECT_DIR:-.}/.task"
 STATE_FILE="$TASK_DIR/state.json"
 
+# JSON tool path (cross-platform jq replacement)
+JSON_TOOL="bun $PLUGIN_ROOT/scripts/json-tool.ts"
+
 # Check if .task is in .gitignore and prompt user if not (once per project)
 check_gitignore_prompt() {
   local project_dir="${CLAUDE_PROJECT_DIR:-.}"
@@ -76,15 +79,15 @@ get_state() {
 
 # Get specific field
 get_status() {
-  jq -r '.status' "$STATE_FILE"
+  $JSON_TOOL get "$STATE_FILE" ".status"
 }
 
 get_task_id() {
-  jq -r '.current_task_id // empty' "$STATE_FILE"
+  $JSON_TOOL get "$STATE_FILE" ".current_task_id // empty"
 }
 
 get_iteration() {
-  jq -r '.iteration' "$STATE_FILE"
+  $JSON_TOOL get "$STATE_FILE" ".iteration"
 }
 
 # Update state atomically (write to tmp, then mv)
@@ -98,7 +101,7 @@ set_state() {
   fi
 
   local current_status
-  current_status=$(jq -r '.status' "$STATE_FILE")
+  current_status=$($JSON_TOOL get "$STATE_FILE" ".status")
 
   # Store previous state when transitioning to error or needs_user_input
   # But preserve existing previous_state if we're already in that state (avoid clobbering)
@@ -106,21 +109,27 @@ set_state() {
   if [[ "$new_status" == "error" || "$new_status" == "needs_user_input" ]]; then
     if [[ "$current_status" == "$new_status" ]]; then
       # Already in this state - preserve existing previous_state
-      prev_state=$(jq -r '.previous_state // empty' "$STATE_FILE")
+      prev_state=$($JSON_TOOL get "$STATE_FILE" ".previous_state // empty")
     else
       # Transitioning into this state - record where we came from
       prev_state="$current_status"
     fi
   fi
 
+  # Copy to temp file and update
+  cp "$STATE_FILE" "${STATE_FILE}.tmp"
   if [[ -n "$prev_state" ]]; then
-    jq --arg s "$new_status" --arg t "$task_id" --arg p "$prev_state" \
-      '.status = $s | .current_task_id = $t | .previous_state = $p | .updated_at = (now | todate)' \
-      "$STATE_FILE" > "${STATE_FILE}.tmp"
+    $JSON_TOOL set "${STATE_FILE}.tmp" \
+      "status=$new_status" \
+      "current_task_id=$task_id" \
+      "previous_state=$prev_state" \
+      "updated_at@=now"
   else
-    jq --arg s "$new_status" --arg t "$task_id" \
-      '.status = $s | .current_task_id = $t | del(.previous_state) | .updated_at = (now | todate)' \
-      "$STATE_FILE" > "${STATE_FILE}.tmp"
+    $JSON_TOOL set "${STATE_FILE}.tmp" \
+      "status=$new_status" \
+      "current_task_id=$task_id" \
+      "-previous_state" \
+      "updated_at@=now"
   fi
 
   mv "${STATE_FILE}.tmp" "$STATE_FILE"
@@ -128,7 +137,7 @@ set_state() {
 
 # Get previous state (used for error recovery)
 get_previous_state() {
-  jq -r '.previous_state // empty' "$STATE_FILE"
+  $JSON_TOOL get "$STATE_FILE" ".previous_state // empty"
 }
 
 # Check if state file is readable (for non-mutating commands)
@@ -137,7 +146,7 @@ check_state_readable() {
     echo "State file missing. Run './scripts/orchestrator.sh' to initialize."
     return 1
   fi
-  if ! jq empty "$STATE_FILE" 2>/dev/null; then
+  if ! $JSON_TOOL valid "$STATE_FILE"; then
     echo "State file invalid JSON. Run './scripts/orchestrator.sh reset' to fix."
     return 1
   fi
@@ -146,15 +155,15 @@ check_state_readable() {
 
 # Increment iteration (for review loops)
 increment_iteration() {
-  jq '.iteration += 1 | .updated_at = (now | todate)' \
-    "$STATE_FILE" > "${STATE_FILE}.tmp"
+  cp "$STATE_FILE" "${STATE_FILE}.tmp"
+  $JSON_TOOL set "${STATE_FILE}.tmp" "+iteration" "updated_at@=now"
   mv "${STATE_FILE}.tmp" "$STATE_FILE"
 }
 
 # Reset iteration (for new task)
 reset_iteration() {
-  jq '.iteration = 0 | .started_at = (now | todate) | .updated_at = (now | todate)' \
-    "$STATE_FILE" > "${STATE_FILE}.tmp"
+  cp "$STATE_FILE" "${STATE_FILE}.tmp"
+  $JSON_TOOL set "${STATE_FILE}.tmp" "iteration:=0" "started_at@=now" "updated_at@=now"
   mv "${STATE_FILE}.tmp" "$STATE_FILE"
 }
 
@@ -164,7 +173,7 @@ reset_iteration() {
 is_stuck() {
   local timeout_seconds="${1:-600}"
   local updated_at
-  updated_at=$(jq -r '.updated_at // empty' "$STATE_FILE")
+  updated_at=$($JSON_TOOL get "$STATE_FILE" ".updated_at // empty")
 
   if [[ -z "$updated_at" ]]; then
     echo "0"
@@ -201,20 +210,16 @@ get_config_value() {
   # Build list of config files to merge (base first, overrides last)
   local configs=("$base_cfg")
 
-  if [[ -f "$plugin_local_cfg" ]] && jq empty "$plugin_local_cfg" 2>/dev/null; then
+  if [[ -f "$plugin_local_cfg" ]] && $JSON_TOOL valid "$plugin_local_cfg" 2>/dev/null; then
     configs+=("$plugin_local_cfg")
   fi
 
-  if [[ -f "$project_local_cfg" ]] && jq empty "$project_local_cfg" 2>/dev/null; then
+  if [[ -f "$project_local_cfg" ]] && $JSON_TOOL valid "$project_local_cfg" 2>/dev/null; then
     configs+=("$project_local_cfg")
   fi
 
-  # Merge configs (later files override earlier)
-  if [[ ${#configs[@]} -eq 1 ]]; then
-    jq -r "$filter" "${configs[0]}"
-  else
-    jq -r -s 'reduce .[] as $item ({}; . * $item) | '"$filter" "${configs[@]}"
-  fi
+  # Merge configs and get value (merge-get handles missing files gracefully)
+  $JSON_TOOL merge-get "$filter" "${configs[@]}"
 }
 
 # Get review loop limit from config (legacy, for backward compat)

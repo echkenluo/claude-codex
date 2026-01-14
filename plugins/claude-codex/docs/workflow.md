@@ -117,7 +117,7 @@ After completion, run SEQUENTIAL reviews (each model reviews once):
      If approved: transition to implementing
 
 When all reviews pass:
-  ./scripts/state-manager.sh set implementing "$(jq -r .id .task/plan-refined.json)"
+  ./scripts/state-manager.sh set implementing "$(bun ./scripts/json-tool.ts get .task/plan-refined.json .id)"
 ```
 
 ### Commands
@@ -301,7 +301,7 @@ The recovery tool respects which phase failed:
 ./scripts/recover.sh
 
 # Check previous state
-cat .task/state.json | jq '.previous_state'
+bun ./scripts/json-tool.ts get .task/state.json .previous_state
 ```
 
 ### Local Config Overrides

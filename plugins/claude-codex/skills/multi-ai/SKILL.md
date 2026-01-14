@@ -50,7 +50,7 @@ Create `.task/plan.json` with:
 ## Step 5: Transition to Refining
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/scripts/state-manager.sh" set plan_refining "$(jq -r .id .task/plan.json)"
+"${CLAUDE_PLUGIN_ROOT}/scripts/state-manager.sh" set plan_refining "$(bun ${CLAUDE_PLUGIN_ROOT}/scripts/json-tool.ts get .task/plan.json .id)"
 ```
 
 ## Step 6: Refine Plan
@@ -93,7 +93,7 @@ When all approve, continue.
 ## Step 10: Complete
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/scripts/state-manager.sh" set complete "$(jq -r .id .task/plan-refined.json)"
+"${CLAUDE_PLUGIN_ROOT}/scripts/state-manager.sh" set complete "$(bun ${CLAUDE_PLUGIN_ROOT}/scripts/json-tool.ts get .task/plan-refined.json .id)"
 ```
 
 Report success to the user.

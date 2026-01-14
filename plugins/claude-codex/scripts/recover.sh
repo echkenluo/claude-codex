@@ -6,6 +6,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Source state manager for PLUGIN_ROOT and TASK_DIR
 source "$SCRIPT_DIR/state-manager.sh"
 
+# JSON tool path (cross-platform jq replacement)
+JSON_TOOL="bun $PLUGIN_ROOT/scripts/json-tool.ts"
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -23,7 +26,7 @@ show_status() {
 
   if [[ -f "$TASK_DIR/current-task.json" ]]; then
     echo -e "${BLUE}Current Task:${NC}"
-    jq -r '.title // "No title"' "$TASK_DIR/current-task.json"
+    $JSON_TOOL get "$TASK_DIR/current-task.json" '.title // "No title"'
     echo ""
   fi
 
