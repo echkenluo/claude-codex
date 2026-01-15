@@ -4,6 +4,28 @@ A Claude Code plugin marketplace providing multi-AI orchestration tools for plan
 
 **Supported Platforms:** Windows, macOS, Linux
 
+> **New to Claude Codex?** Check out our [comprehensive Wiki](https://github.com/Z-M-Huang/claude-codex/wiki) for beginner-friendly guides and tutorials.
+
+## Why Multi-AI Review?
+
+**Would you deploy code that only one person looked at?**
+
+In professional software development, code reviews are mandatory. Google requires review for every change. Microsoft uses multiple review stages. Claude Codex brings this professional standard to AI-assisted development.
+
+Instead of trusting a single AI's output, your code goes through **three independent reviews**:
+
+| Reviewer | What It Catches |
+|----------|-----------------|
+| **Claude Sonnet** | Obvious bugs, security basics, code style |
+| **Claude Opus** | Architectural issues, subtle bugs, edge cases |
+| **Codex** | Fresh perspective from a different AI |
+
+**The result:** More bugs caught, better security, and production-ready code.
+
+Each reviewer checks for OWASP Top 10 vulnerabilities, proper error handling, and code quality. If Sonnet misses something, Opus or Codex will likely catch it. The loop-until-approved model means code doesn't proceed until all three reviewers give the green light.
+
+Learn more: [Why Claude Codex?](https://github.com/Z-M-Huang/claude-codex/wiki/Why-Claude-Codex)
+
 ## Installation
 
 ### Step 1: Add Marketplace
@@ -208,6 +230,17 @@ Example plugin.json:
 ```bash
 /plugin validate .
 ```
+
+## Documentation
+
+For detailed guides, visit our [Wiki](https://github.com/Z-M-Huang/claude-codex/wiki):
+
+- [Why Claude Codex?](https://github.com/Z-M-Huang/claude-codex/wiki/Why-Claude-Codex) - Benefits of multi-AI review
+- [Getting Started](https://github.com/Z-M-Huang/claude-codex/wiki/Getting-Started) - Step-by-step installation for beginners
+- [Understanding the Pipeline](https://github.com/Z-M-Huang/claude-codex/wiki/Understanding-the-Pipeline) - How the review process works
+- [How to Use](https://github.com/Z-M-Huang/claude-codex/wiki/How-to-Use) - Commands and usage examples
+- [Configuration](https://github.com/Z-M-Huang/claude-codex/wiki/Configuration) - Customization options
+- [Troubleshooting](https://github.com/Z-M-Huang/claude-codex/wiki/Troubleshooting) - Common issues and solutions
 
 ## Related Projects
 
