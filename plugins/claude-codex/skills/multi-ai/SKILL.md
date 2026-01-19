@@ -91,7 +91,7 @@ Run the automated review loop (see "Automated Review Loop" section below).
 "${CLAUDE_PLUGIN_ROOT}/scripts/state-manager.sh" set implementing "$(bun ${CLAUDE_PLUGIN_ROOT}/scripts/json-tool.ts get .task/plan-refined.json .id)"
 ```
 
-**Invoke /implement-sonnet** to implement the approved plan.
+**Invoke /implement-opus** to implement the approved plan.
 
 ### Step 7: Automated Code Review Loop
 

@@ -27,7 +27,7 @@ Multi-AI Pipeline (Autonomous Mode)
   │     └── Automated review loop (fix issues, no user pauses)
   │
   ├── Phase 3: Implementation (AUTONOMOUS)
-  │     ├── /implement-sonnet → Write code
+  │     ├── /implement-opus → Write code
   │     └── Automated review loop (fix issues, no user pauses)
   │
   └── Phase 4: Completion
@@ -62,7 +62,8 @@ Located in `skills/` (plugin root level for `/plugin install` support):
 |-------|---------|-------|-------|
 | `/multi-ai` | Start pipeline (entry point) | - | All |
 | `/user-story` | Gather requirements (interactive) | - | Requirements |
-| `/implement-sonnet` | Code implementation | sonnet | Implementation |
+| `/implement-sonnet` | Code implementation (efficient) | sonnet | Implementation |
+| `/implement-opus` | Code implementation (complex tasks) | opus | Implementation |
 | `/review-sonnet` | Fast review | sonnet | Review |
 | `/review-opus` | Deep review | opus | Review |
 | `/review-codex` | Final review | codex | Review |
@@ -109,7 +110,7 @@ plan_refining (refine + AUTOMATED review loop)
   │  sonnet → fix → opus → fix → codex
   │  Loop until approved (no user pauses)
   ↓ [all approved]
-implementing (/implement-sonnet + AUTOMATED review loop)
+implementing (/implement-opus + AUTOMATED review loop)
   │  sonnet → fix → opus → fix → codex
   │  Loop until approved (no user pauses)
   ↓ [all approved]
